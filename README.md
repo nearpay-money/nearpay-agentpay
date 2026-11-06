@@ -88,13 +88,18 @@ keys; tests never reach mainnet.
 - **Requirements** (`POST /x402/requirements`): one per 402 response, single use. `payTo` is an active Intents-account
   destination (asset default, then account default); fee = `max(ceil(amount × bps), min fee at the asset price, 1)`
   from the account's `intents_transfer` rule, paid by the payer as a second transfer to the treasury; binding =
-  `np1:` + base58(sha256(JCS(fields + 16 random bytes))).
+  `np1:` + base58(sha256(JCS(fields + 16 random bytes))). `extra.deadline` (spec 0.1.5) is the binding's
+  `expires_at` in RFC 3339; verify refuses an echoed deadline that differs and accepts one that was left out.
 - **Verify** (§6): `accepted` == `paymentRequirements` (JCS) and the forwarded `resource.url` (if any) equals the issued
   one → issued, unconsumed, unexpired requirement of this account and mode → signature (NEP-413, ERC-191, raw ed25519)
   and exactly the two transfers with `memo = binding`, deadline in (now + 5 s, expiry] → `simulate_intents` in the
   payload's mode → payer screening (cached 24 h, fail closed) → quotas → cached 60 s.
 - **Settle** (§7): idempotent on the payload hash (a replay gets the same answer, never a second relay); queues the
   payload and consumes the requirement in one transaction, then waits up to 8 s (`settlement_pending` otherwise).
+  The first response carrying the final outcome claims it (`agent_payments.result_reported_at`); every later one
+  repeats it with `replayed: true` (spec 0.1.5), so the merchant delivers the resource at most once per settlement.
+- **AgentPayment.sequence** (spec 0.1.5) is the row's `version`, bumped by every change (status moves and the
+  batcher's `tx_hash` write) and carried as `aggregate.version` on the events.
 - **Checkout**: `agent_pay/requirements` checks the client secret through payments and returns payments' agent attempt;
   `agent_pay` and `POST /internal/relay` check the payload against the rails execution, simulate and queue it (one live
   payload per binding). Rails' indexer settles the execution from the binding memo; agentpay emits nothing for them.

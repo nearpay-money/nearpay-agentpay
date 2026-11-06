@@ -75,6 +75,8 @@ export interface MerchantOptions {
 
 export interface Session {
   readonly id: `cs_${string}`;
+  /** The session's payment intent (`PublicCheckoutSession.payment_intent`, spec 0.1.5). */
+  readonly paymentIntent: `pi_${string}`;
   readonly secret: string;
   status: "open" | "expiring" | "complete" | "expired";
   readonly merchant: Merchant;
@@ -225,6 +227,7 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
       object: "checkout_session",
       livemode: ss.livemode,
       status: ss.status,
+      payment_intent: ss.paymentIntent,
       intent_status: "requires_payment",
       amount: 200,
       currency: "usd",
@@ -487,6 +490,7 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
         .slice(0, 32);
       const session: Session = {
         id,
+        paymentIntent: newId("pi") as `pi_${string}`,
         secret: `${id}_secret_${tail}`,
         status: s.status ?? "open",
         merchant: m,

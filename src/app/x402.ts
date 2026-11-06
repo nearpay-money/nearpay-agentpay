@@ -7,6 +7,7 @@
  * screening of the payer (cached 24 h) → quotas (account, payer) → cache the success 60 s.
  * Settle (§7): replay by payload hash, else verify → queue the payload and consume the requirement in
  * one transaction → wait up to 8 s for the batcher's final outcome (`settlement_pending` otherwise).
+ * The first response with the final outcome is the delivery; later ones say `replayed: true`.
  */
 import type {
   IntentMessage,
@@ -69,14 +70,16 @@ export type Verified = Valid | Invalid;
 
 const invalid = (reason: InvalidReason, message: string): Invalid => ({ ok: false, reason, message });
 
-function sameTerms(r: RequirementRow, pr: PaymentRequirements): boolean {
+/** The echoed terms are the issued ones. `extra.deadline` (0.1.5) may be absent (older agents drop it). */
+export function sameTerms(r: RequirementRow, pr: PaymentRequirements): boolean {
   return (
     r.pay_to === pr.payTo &&
     r.asset_id === pr.asset &&
     BigInt(r.amount) === BigInt(pr.amount) &&
     r.fee_to === pr.extra.fee.to &&
     BigInt(r.fee_amount) === BigInt(pr.extra.fee.amount) &&
-    r.max_timeout_s === pr.maxTimeoutSeconds
+    r.max_timeout_s === pr.maxTimeoutSeconds &&
+    (pr.extra.deadline === undefined || Date.parse(pr.extra.deadline) === r.expires_at.getTime())
   );
 }
 
@@ -186,10 +189,15 @@ export async function verify(ap: Agentpay, m: Merchant, body: VerifyBody): Promi
 
 type SettleOut = z.input<typeof SettleResponse>;
 
-export function settleView(r: AgentPaymentRow): SettleOut {
+/**
+ * The settle answer for an agent payment. `replayed` (0.1.5, CR-15-12) marks a final outcome that an
+ * earlier settle response already carried; it is never set on `settlement_pending` (not a result yet).
+ */
+export function settleView(r: AgentPaymentRow, replayed = false): SettleOut {
   const transaction = r.tx_hash ?? "";
+  const again = replayed && isTerminal(r.status) ? { replayed: true } : {};
   if (r.status === "settled")
-    return { success: true, transaction, network: X402_NETWORK, payer: r.payer, amount: r.amount };
+    return { success: true, transaction, network: X402_NETWORK, payer: r.payer, amount: r.amount, ...again };
   if (r.status === "failed")
     return {
       success: false,
@@ -198,6 +206,7 @@ export function settleView(r: AgentPaymentRow): SettleOut {
       payer: r.payer,
       errorReason: settleError(r.error_reason),
       errorMessage: `settlement failed: ${r.error_reason ?? "unknown"}`,
+      ...again,
     };
   return {
     success: false,
@@ -207,6 +216,22 @@ export function settleView(r: AgentPaymentRow): SettleOut {
     errorReason: "settlement_pending",
     errorMessage: "the payment is queued for settlement; call settle again with the same payload",
   };
+}
+
+/**
+ * Answers with the payment's state. The first response carrying its final outcome claims the report
+ * (conditional update, so concurrent settle calls cannot both win); every later one is `replayed`.
+ */
+export async function report(ap: Agentpay, r: AgentPaymentRow): Promise<SettleOut> {
+  if (!isTerminal(r.status)) return settleView(r);
+  const claimed = await ap.db
+    .updateTable("agent_payments")
+    .set({ result_reported_at: new Date(ap.now()) })
+    .where("id", "=", r.id)
+    .where("result_reported_at", "is", null)
+    .returning("id")
+    .executeTakeFirst();
+  return settleView(r, !claimed);
 }
 
 /** Waits until the agent payment is final or `waitMs` passed (Valkey notification + 250 ms re-reads). */
@@ -251,7 +276,7 @@ export async function settle(ap: Agentpay, m: Merchant, body: VerifyBody, deadli
     if (existing) {
       if (existing.account_id !== m.account || existing.livemode !== m.livemode || existing.kind !== "x402")
         return settleInvalid("requirement_unknown", "this payload belongs to another payment");
-      return settleView(await awaitFinal(ap, existing.id, waitMs()));
+      return report(ap, await awaitFinal(ap, existing.id, waitMs()));
     }
     if (m.livemode && (await killSwitchEngaged(ap))) throw killSwitchError();
 
@@ -321,7 +346,7 @@ export async function settle(ap: Agentpay, m: Merchant, body: VerifyBody, deadli
     });
     if (!queued) return settleInvalid("requirement_consumed", "these requirements were already used");
     ap.log.info({ agent_payment: fromUuid("ap", queued.id), binding: v.binding }, "x402 payment queued");
-    return settleView(await awaitFinal(ap, queued.id, waitMs()));
+    return report(ap, await awaitFinal(ap, queued.id, waitMs()));
   } finally {
     ap.metrics.settleLatency((ap.now() - started) / 1000);
   }
