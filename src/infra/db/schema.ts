@@ -1,4 +1,4 @@
-/** Kysely table types (migrations/0001_agentpay.sql). numeric(78,0) columns read as decimal strings. */
+/** Kysely table types (migrations/0001_agentpay.sql, 0002_settle_reported.sql). numeric(78,0) columns read as decimal strings. */
 import type { ColumnType, KitTables } from "@nearpay-internal/db";
 import type { AgentPaymentKind, AgentPaymentStatus } from "../../domain/facilitator-payment/status.js";
 
@@ -95,6 +95,8 @@ export interface AgentPaymentsTable {
   created_at: Timestamp;
   updated_at: Timestamp;
   settled_at: OptTimestamp;
+  /** First /x402/settle response that carried the final outcome (0002; later ones are `replayed`). */
+  result_reported_at: OptTimestamp;
   version: Def<number>;
 }
 

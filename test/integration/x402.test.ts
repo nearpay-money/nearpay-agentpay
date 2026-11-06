@@ -113,6 +113,8 @@ describe("supported and requirements", () => {
       max_timeout_s: 120,
     });
     expect(row.expires_at.getTime() - row.created_at.getTime()).toBeGreaterThan(110_000);
+    // 0.1.5: the absolute expiry of the requirement is the binding's expires_at
+    expect(a?.extra.deadline).toBe(row.expires_at.toISOString());
   });
 
   it("uses the live treasury and the minimum fee in live mode", async () => {
@@ -198,6 +200,15 @@ describe("verify", () => {
     const altered = x402Body(req, p.sign(t));
     (altered.paymentPayload.accepted as { amount: string }).amount = "1";
     expect(await reason(altered)).toBe("invalid_payment_requirements");
+    // 0.1.5 extra.deadline: an altered one is refused; an agent on 0.1.4 that dropped it is not
+    const lateDeadline = x402Body(req, p.sign(t));
+    for (const side of [lateDeadline.paymentPayload.accepted, lateDeadline.paymentRequirements])
+      (side as { extra: { deadline: string } }).extra.deadline = new Date(Date.now() + 3_600_000).toISOString();
+    expect(await reason(lateDeadline)).toBe("invalid_payment_requirements");
+    const noDeadline = x402Body(req, p.sign(t));
+    for (const side of [noDeadline.paymentPayload.accepted, noDeadline.paymentRequirements])
+      delete (side as { extra: { deadline?: string } }).extra.deadline;
+    expect((await post(m, "/x402/verify", noDeadline)).body).toEqual({ isValid: true, payer: p.account });
     // the payload names another resource than the requirements were issued for
     const otherResource = x402Body(req, p.sign(t));
     (otherResource.paymentPayload as Record<string, unknown>).resource = { url: "https://merchant.example/other" };
@@ -288,11 +299,14 @@ describe("verify", () => {
       .set({ expires_at: new Date(Date.now() - 1000) })
       .where("binding", "=", termsOf(req).binding)
       .execute();
-    const r = await post(
-      m,
-      "/x402/verify",
-      x402Body(req, funded(payer()).sign({ ...termsOf(req), deadline: new Date(Date.now() + 20_000).toISOString() })),
+    const body = x402Body(
+      req,
+      funded(payer()).sign({ ...termsOf(req), deadline: new Date(Date.now() + 20_000).toISOString() }),
     );
+    // the row's expiry was moved behind the issued extra.deadline; an agent that omits it (spec 0.1.4) reaches the expiry check
+    for (const side of [body.paymentPayload.accepted, body.paymentRequirements])
+      delete (side as { extra: { deadline?: string } }).extra.deadline;
+    const r = await post(m, "/x402/verify", body);
     expect(r.body).toMatchObject({ isValid: false, invalidReason: "requirement_expired" });
   });
 });
@@ -318,6 +332,10 @@ describe("settle (test mode, sandbox Verifier)", () => {
       (x) => (x.data.object as { binding: string }).binding === t.binding,
     );
     const ap = AgentPayment.parse(e.data.object);
+    // 0.1.5: sequence = the aggregate version, on the event object and the API alike
+    expect(ap.sequence).toBe(e.aggregate.version);
+    const got = await s.call("GET", `/v1/agent_payments/${ap.id}`, { token: await s.token(m) });
+    expect(got.body.sequence).toBe(ap.sequence);
     expect(ap).toMatchObject({
       kind: "x402",
       status: "settled",
@@ -329,9 +347,12 @@ describe("settle (test mode, sandbox Verifier)", () => {
     expect(e.account_id).toBe(uuid(m.account, "acct"));
     await probe.close();
 
-    // idempotent on the payload hash: a replayed PAYMENT-SIGNATURE gets the same answer, never a second relay
+    // idempotent on the payload hash: a replayed PAYMENT-SIGNATURE gets the same answer, never a second relay,
+    // marked `replayed` (0.1.5) so the merchant delivers the resource once
+    expect(out.replayed).toBeUndefined();
     const again = await post(m, "/x402/settle", x402Body(req, signed));
-    expect(again.body).toEqual(r.body);
+    expect(again.body).toEqual({ ...r.body, replayed: true });
+    expect((await post(m, "/x402/settle", x402Body(req, signed))).body).toEqual({ ...r.body, replayed: true });
     const rows = await s.admin.db.selectFrom("agent_payments").select("id").where("binding", "=", t.binding).execute();
     expect(rows).toHaveLength(1);
     // single use: another payload for the same requirements
@@ -367,10 +388,27 @@ describe("settle (test mode, sandbox Verifier)", () => {
       const started = Date.now();
       const pending = await post(m, "/x402/settle", x402Body(req, signed));
       expect(pending.body).toMatchObject({ success: false, errorReason: "settlement_pending", transaction: "" });
+      expect(pending.body).not.toHaveProperty("replayed");
       expect(Date.now() - started).toBeGreaterThan(7_000);
+      const token = await s.token(m);
+      const row = await s.admin.db
+        .selectFrom("agent_payments")
+        .select("id")
+        .where("binding", "=", termsOf(req).binding)
+        .executeTakeFirstOrThrow();
+      const apId = fromUuid("ap", row.id);
+      const queuedSeq = (await s.call("GET", `/v1/agent_payments/${apId}`, { token })).body.sequence as number;
+      expect(queuedSeq).toBeGreaterThanOrEqual(0);
       await s.tick();
+      // the first final answer is the delivery (the earlier one was only pending); the next repeats it
       const done = await post(m, "/x402/settle", x402Body(req, signed));
       expect(done.body).toMatchObject({ success: true, payer: p.account });
+      expect(done.body).not.toHaveProperty("replayed");
+      expect((await post(m, "/x402/settle", x402Body(req, signed))).body).toEqual({ ...done.body, replayed: true });
+      // queued → submitted → tx_hash recorded → settled: the sequence moved with every change
+      const settled = await s.call("GET", `/v1/agent_payments/${apId}`, { token });
+      expect(settled.body.status).toBe("settled");
+      expect(settled.body.sequence).toBe(queuedSeq + 3);
     } finally {
       s.resume();
     }

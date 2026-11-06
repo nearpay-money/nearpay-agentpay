@@ -65,6 +65,38 @@ async function assetInfo(ap: Agentpay, assetId: string, livemode: boolean): Prom
   }
 }
 
+/** The terms of one issued requirement (unix-second `expiresAt`, the value the binding hashes). */
+export interface IssuedTerms {
+  amount: string;
+  assetId: string;
+  payTo: string;
+  maxTimeoutS: number;
+  feeTo: string;
+  fee: string;
+  binding: string;
+  expiresAt: number;
+}
+
+/** `accepts[0]` of the 402: `extra.deadline` (0.1.5, CR-15-11) is the binding's `expires_at` in RFC 3339. */
+export function paymentRequirements(t: IssuedTerms): PaymentRequirements {
+  return {
+    scheme: X402_SCHEME,
+    network: X402_NETWORK,
+    amount: t.amount,
+    asset: t.assetId,
+    payTo: t.payTo,
+    maxTimeoutSeconds: t.maxTimeoutS,
+    extra: {
+      assetTransferMethod: X402_TRANSFER_METHOD,
+      paymentFlow: "authorization",
+      fee: { to: t.feeTo, amount: t.fee },
+      binding: t.binding as PaymentRequirements["extra"]["binding"],
+      verifyingContract: "intents.near",
+      deadline: new Date(t.expiresAt * 1000).toISOString(),
+    },
+  };
+}
+
 export async function issueRequirements(
   ap: Agentpay,
   m: Merchant,
@@ -132,20 +164,15 @@ export async function issueRequirements(
       expires_at: new Date(expiresAt * 1000),
     })
     .execute();
-  const accepts: PaymentRequirements = {
-    scheme: X402_SCHEME,
-    network: X402_NETWORK,
+  const accepts = paymentRequirements({
     amount: amount.toString(),
-    asset: assetId,
+    assetId,
     payTo,
-    maxTimeoutSeconds: body.max_timeout_s,
-    extra: {
-      assetTransferMethod: X402_TRANSFER_METHOD,
-      paymentFlow: "authorization",
-      fee: { to: feeTo, amount: fee.toString() },
-      binding: binding as PaymentRequirements["extra"]["binding"],
-      verifyingContract: "intents.near",
-    },
-  };
+    maxTimeoutS: body.max_timeout_s,
+    feeTo,
+    fee: fee.toString(),
+    binding,
+    expiresAt,
+  });
   return { x402Version: X402_VERSION, resource: { ...resource }, accepts: [accepts] };
 }

@@ -21,9 +21,11 @@ import { INTERNAL_ROUTES, SUBJECTS, type Subject } from "@nearpay-internal/spec"
 import { USDC_NEAR } from "@nearpay-internal/testing";
 import { describe, expect, it } from "vitest";
 import { agentpayRoutes } from "../../src/api/routes.js";
-import { type AgentPaymentRow, agentPaymentView } from "../../src/app/views.js";
+import { paymentRequirements } from "../../src/app/requirements.js";
+import { agentPaymentView } from "../../src/app/views.js";
 import { settleView, supported } from "../../src/app/x402.js";
 import { agentpayHandlers } from "../../src/consumers/handlers.js";
+import { agentPaymentRow } from "../support/rows.js";
 
 const ALL = [...PUBLIC_ROUTES, ...INTERNAL_ROUTES];
 
@@ -58,40 +60,7 @@ describe("routes and events", () => {
   });
 });
 
-const now = new Date();
-const row = (o: Partial<AgentPaymentRow> = {}): AgentPaymentRow => ({
-  id: uuidv7(),
-  account_id: uuidv7(),
-  livemode: false,
-  kind: "x402",
-  binding: "np1:3yZe7d5Bcv1ZTkNe5U5w4mbR1XK8Wb1pXtZqYfVvR8c1",
-  payer: "agent.near",
-  pay_to: "merchant.near",
-  fee_to: "treasury.nearpay.near",
-  payload_hash: Buffer.alloc(32),
-  payload: {},
-  standard: "nep413",
-  intent_hashes: ["8Ld3Ap4zR2yK7uR3nVbXq1sH4cW9tE6mP2fJ5gD1aB7c"],
-  nonces: ["JSgSs0khI/8D3+uekOiXOHsqE8dftv1+p+W/bj6OA3Q="],
-  deadline: now,
-  status: "settled",
-  amount: "10000",
-  asset_id: USDC_NEAR,
-  fee_amount: "30",
-  resource_url: "https://merchant.example/premium",
-  checkout_session_id: null,
-  solo: false,
-  batch_id: uuidv7(),
-  tx_hash: "8Ld3Ap4zR2yK7uR3nVbXq1sH4cW9tE6mP2fJ5gD1aB7c",
-  block_height: 180_000_000n,
-  error_reason: null,
-  execution_id: null,
-  created_at: now,
-  updated_at: now,
-  settled_at: now,
-  version: 3,
-  ...o,
-});
+const row = agentPaymentRow;
 
 describe("objects", () => {
   it("agent payments (API and events) parse in every state and kind", () => {
@@ -107,9 +76,10 @@ describe("objects", () => {
       }),
     ]) {
       const v = agentPaymentView(r);
-      expect(AgentPayment.safeParse(v).success).toBe(true);
+      // 0.1.5: `sequence` is optional in the schema for 0.1.4 readers, but servers MUST send it
+      expect(AgentPayment.parse(v).sequence).toBe(r.version);
       for (const s of ["evt.agentpay.agent_payment.settled", "evt.agentpay.agent_payment.failed"] as const)
-        expect(SUBJECTS[s].object.safeParse(v).success).toBe(true);
+        expect(SUBJECTS[s].object.parse(v)).toHaveProperty("sequence", r.version);
     }
   });
 
@@ -123,10 +93,35 @@ describe("objects", () => {
     ]) {
       const v = SettleResponse.parse(settleView(r));
       expect(decodeX402Header(encodeX402Header(v))).toEqual(v);
+      expect(v.replayed).toBeUndefined();
+      // 0.1.5: a repeated final outcome says so; a pending answer is never a replay
+      const again = SettleResponse.parse(settleView(r, true));
+      expect(decodeX402Header(encodeX402Header(again))).toEqual(again);
+      expect(again.replayed).toBe(r.status === "settled" || r.status === "failed" ? true : undefined);
     }
     expect(SettleResponse.parse(settleView(row({ status: "failed", error_reason: "something new" }))).errorReason).toBe(
       "unexpected_settle_error",
     );
+  });
+
+  it("issued requirements parse with the 0.1.5 extra.deadline and travel in PAYMENT-REQUIRED", () => {
+    const accepts = paymentRequirements({
+      amount: "10000",
+      assetId: USDC_NEAR,
+      payTo: "merchant.near",
+      maxTimeoutS: 120,
+      feeTo: "treasury.nearpay.near",
+      fee: "30",
+      binding: "np1:3yZe7d5Bcv1ZTkNe5U5w4mbR1XK8Wb1pXtZqYfVvR8c1",
+      expiresAt: 1_794_000_000,
+    });
+    const body = PaymentRequired.parse({
+      x402Version: 2,
+      resource: { url: "https://merchant.example/premium" },
+      accepts: [accepts],
+    });
+    expect(body.accepts[0]?.extra.deadline).toBe("2026-11-06T21:20:00.000Z");
+    expect(decodeX402Header(encodeX402Header(body))).toEqual(body);
   });
 
   it("supported parses with and without a relayer account", () => {

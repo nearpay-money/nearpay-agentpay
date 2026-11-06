@@ -30,5 +30,8 @@ export function agentPaymentView(r: AgentPaymentRow): AgentPayment {
     block_height: r.block_height === null ? null : Number(r.block_height),
     error_reason: r.error_reason,
     settled_at: r.settled_at ? unix(r.settled_at) : null,
+    // the aggregate version: every change goes through ledger.updatePayment (or the batcher's tx_hash
+    // write), which bumps it; it is also the `aggregate.version` of the agent payment's events (0.1.5)
+    sequence: r.version,
   };
 }

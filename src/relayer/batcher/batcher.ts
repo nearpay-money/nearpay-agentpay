@@ -310,7 +310,8 @@ export function batcher(ap: Agentpay, o: BatcherOptions) {
         .execute();
       await tx
         .updateTable("agent_payments")
-        .set({ tx_hash: txHash, updated_at: new Date() })
+        // tx_hash is part of the AgentPayment object: a change, so the version (= sequence) moves too
+        .set((eb) => ({ tx_hash: txHash, version: eb("version", "+", 1), updated_at: new Date() }))
         .where("batch_id", "=", c.batchId)
         .where("status", "=", "submitted")
         .execute();
