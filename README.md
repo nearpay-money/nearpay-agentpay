@@ -27,7 +27,7 @@ This repo stays surgical: design docs live in [`nearpay-brain`](../nearpay-brain
 
 ```
 nearpay-agentpay/
-├── migrations/                 0001_agentpay.sql (Stage 1 tables)
+├── migrations/                 0001_agentpay.sql (Stage 1 tables), 0002 settle reported, 0003 refund relay
 ├── src/
 │   ├── api/                    spec route bindings
 │   ├── app/                    use cases: requirements, x402 verify/settle, checkout agent pay + relay, reads
@@ -110,6 +110,20 @@ keys; tests never reach mainnet.
   test mode and already-queued payloads continue.
 - **Events**: `evt.agentpay.agent_payment.settled|failed` for x402 payments, from the outbox.
 
+## Behaviour (Stage 2)
+
+- **Refund legs from an Intents account** (`POST /internal/relay` `kind: refund`, spec 0.2.0): the rails execution
+  must be a `refund` leg with `refund.transfer`, awaiting its deposit, memo = binding, belonging to the refund
+  (`reference.refund`). payments' refund (`GET /internal/refunds/{id}`) must show that leg's `sign_intent` next
+  action, consistent with rails' transfer, and the signed payload must be exactly it (signer, receiver, token, amount,
+  memo, deadline, nonce, standard, signed string) — else `422 signed_intent_mismatch`. Then simulate and queue
+  (idempotent on the payload hash). Recorded as a `refund` agent payment (`payer` = merchant signer, `pay_to` = receiver,
+  no fee, `refund_id`); no events (rails' indexer verifies the payer side). Live refund relays stop under the kill switch.
+- **Payer sessions** come from payments' `getPayerCheckoutSession` (CR-15-15; service token + forwarded client
+  secret); the public payer route is used only while payments answers `404 resource_missing` for that route.
+- **Live send** uses kit `sendSignedTx` (CR-15-16) on the bytes whose hash was stored first; a send is "rejected"
+  only when every RPC provider refused it as invalid, otherwise its status is polled.
+
 ## Ops CLI (Stage 1)
 
 `docker compose -p nearpay exec agentpay-api /nodejs/bin/node dist/ops.js <command>`: `payment <ap_…>`, `queue`,
@@ -119,7 +133,9 @@ keys; tests never reach mainnet.
 
 Stage 1 implemented (step 1.2): x402 `exact` + `intents-transfer` facilitator, agent payments, checkout agent pay,
 `/internal/relay`, the batcher with the relayer key pool, the kill-switch consumer and both produced subjects.
-Stage 2 (Intents-account refunds, dashboard) and Stage 3 (`near-intents`, MPP) are not started.
+Stage 2 implemented (step 2.2): Intents-account refund relay, kill switch on live refund relays, payer sessions via
+payments' internal route, kit `sendSignedTx`; refund legs are listed by `GET /v1/agent_payments?kind=refund`
+(dashboard). Stage 3 (`near-intents`, MPP) is not started.
 
 ## Built with
 
