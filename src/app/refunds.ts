@@ -148,8 +148,14 @@ export async function relayRefund(ap: Agentpay, input: RefundRelayInput): Promis
       throw invalidIntent("this payload was relayed for another payment");
     return fromUuid("ap", winner.id);
   } catch (e) {
-    if (isUniqueViolation(e, "ap_binding_live"))
+    if (isUniqueViolation(e, "ap_binding_live")) {
+      // a concurrent submission of the same payload can trip the binding index before the payload-hash
+      // arbiter: that is a replay, answered with the winner (idempotent on the payload hash)
+      const winner = await byHash(ap, hash);
+      if (winner && winner.execution_id === input.executionId && winner.kind === "refund")
+        return fromUuid("ap", winner.id);
       throw invalidIntent("a payload for this refund leg is already being relayed");
+    }
     throw e;
   }
 }

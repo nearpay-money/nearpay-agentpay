@@ -27,7 +27,6 @@ import {
   getInternalRefund,
   getPayerCheckoutSession,
   getSettlementContext,
-  PayerSessionContext,
   type SettlementContext,
   sandboxExecuteIntents,
   sandboxSimulateIntents,
@@ -147,15 +146,9 @@ export function paymentsClient(o: PeerOptions & { baseUrl: string }): Payments {
     ...(o.fetch ? { fetch: o.fetch } : {}),
   });
   return {
-    // kit 0.1.2 `call` cannot add route headers yet (kit 0.2.0, CR-15-16): request + parse with the schema
-    payerSession: async (id, secret) => {
-      const res = await reads.request({
-        method: getPayerCheckoutSession.method,
-        path: `/internal/checkout_sessions/${encodeURIComponent(id)}/payer`,
-        headers: { "x-nearpay-client-secret": secret },
-      });
-      return PayerSessionContext.parse(res.body);
-    },
+    // CR-15-16: `call` adds the route-declared client-secret header and keeps agentpay's service token
+    payerSession: (id, secret) =>
+      reads.call(getPayerCheckoutSession, { params: { id }, headers: { "x-nearpay-client-secret": secret } }),
     refund: (id) => reads.call(getInternalRefund, { params: { id }, timeoutMs: 1_000 }),
     createAgentAttempt: (id, payerWallet) =>
       internal.call(createAgentAttempt, { params: { id }, body: { payer_wallet: payerWallet } }),

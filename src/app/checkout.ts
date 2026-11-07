@@ -256,8 +256,14 @@ export async function relayCheckout(ap: Agentpay, input: RelayInput): Promise<st
     if (!winner) throw new Error("payload vanished");
     return fromUuid("ap", winner.id);
   } catch (e) {
-    if (isUniqueViolation(e, "ap_binding_live"))
+    if (isUniqueViolation(e, "ap_binding_live")) {
+      // a concurrent submission of the same payload can trip the binding index before the payload-hash
+      // arbiter: that is a replay, answered with the winner (idempotent on the payload hash)
+      const winner = await byHash(ap, hash);
+      if (winner && winner.execution_id === input.executionId && winner.kind === "checkout")
+        return fromUuid("ap", winner.id);
       throw invalidIntent("a payment for this requirement is already being relayed");
+    }
     throw e;
   }
 }
