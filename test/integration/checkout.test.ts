@@ -4,8 +4,9 @@
  * (payments' service token only), idempotency, single live payload per binding, and the batcher
  * relaying checkout payloads without emitting agent payment events (rails settles the execution).
  */
-import { AgentPayRequirements, agentPay as agentPayRoute } from "@nearpay/spec";
+import { AgentPayRequirements, agentPay as agentPayRoute, getPublicCheckoutSession } from "@nearpay/spec";
 import { fromUuid } from "@nearpay-internal/ids";
+import { getPayerCheckoutSession } from "@nearpay-internal/spec";
 import { mintServiceToken } from "@nearpay-internal/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Payer, payer } from "../support/payer.js";
@@ -26,6 +27,8 @@ beforeAll(async () => {
 afterAll(async () => {
   await s?.stop();
 });
+
+const publicCalls = () => s.payments.callsTo(getPublicCheckoutSession).length;
 
 const funded = (p: Payer, amount = 10_000_000n) => {
   s.testVerifier.fund(p.account, USDC_NEAR, amount);
@@ -144,6 +147,33 @@ describe("agent_pay", () => {
       body: { payer: p.account },
     });
     expect(r4.body.error.code).toBe("destination_not_intents_account");
+  });
+
+  it("reads the payer session through payments' internal route, falling back to the public one", async () => {
+    const cs = s.session(m);
+    const p = payer();
+    const before = { internal: s.payments.callsTo(getPayerCheckoutSession).length, pub: publicCalls() };
+    await requirements(cs, p);
+    const internal = s.payments.callsTo(getPayerCheckoutSession).slice(before.internal);
+    expect(internal.length).toBe(1);
+    // service token (payments.read) plus the payer's forwarded client secret (CR-15-15)
+    expect(internal[0]?.headers["x-nearpay-client-secret"]).toBe(cs.secret);
+    expect(internal[0]?.principal).toMatchObject({ ptype: "service", sub: "agentpay" });
+    expect(publicCalls()).toBe(before.pub);
+    // a payments without getPayerCheckoutSession (unrecognised URL) still works through the public route
+    s.payerRoute = false;
+    try {
+      const cs2 = s.session(m);
+      await requirements(cs2, p);
+      expect(publicCalls()).toBe(before.pub + 1);
+      const wrong = await s.call("POST", `/v1/checkout/sessions/${cs2.id}/agent_pay/requirements`, {
+        secret: `${cs2.id}_secret_${"Z".repeat(32)}`,
+        body: { payer: p.account },
+      });
+      expect([wrong.status, wrong.body.error.code]).toEqual([401, "client_secret_invalid"]);
+    } finally {
+      s.payerRoute = true;
+    }
   });
 
   it("refuses payloads that do not match a requirement handed out for this session", async () => {

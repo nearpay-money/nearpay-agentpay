@@ -8,7 +8,9 @@
  * | rails `GET /internal/executions/{id}` (relay check)  | 1 s     | 2        | yes     |
  * | rails `GET /internal/assets/{id}` (fee minimum)      | 1 s     | 2        | yes     |
  * | payments `POST …/agent_attempts` (creates a rails execution) | 8 s | 1 | yes  |
- * | payments `GET …/public` (client secret check)        | 2 s     | 2        | yes     |
+ * | payments `GET /internal/checkout_sessions/{id}/payer` (client secret check, CR-15-15) | 2 s | 2 | yes |
+ * | payments `GET …/public` (fallback until payments serves `…/payer`) | 2 s | 2 | yes |
+ * | payments `GET /internal/refunds/{id}` (refund relay check) | 1 s | 2 | yes |
  * | compliance `POST /internal/screenings` (cached 24 h) | 1 s     | 1        | yes     |
  * | sandbox `/sim/intents/*` (test mode)                 | 3 s / 10 s | 1     | no      |
  */
@@ -22,6 +24,8 @@ import {
   type Execution,
   getExecution,
   getInternalAsset,
+  getInternalRefund,
+  getPayerCheckoutSession,
   getSettlementContext,
   type SettlementContext,
   sandboxExecuteIntents,
@@ -51,6 +55,8 @@ export function upstreamCode(e: unknown): {
 export type InternalAsset = RouteResponse<typeof getInternalAsset>;
 export type AgentAttempt = RouteResponse<typeof createAgentAttempt>;
 export type PublicSession = RouteResponse<typeof getPublicCheckoutSession>;
+export type PayerSession = RouteResponse<typeof getPayerCheckoutSession>;
+export type InternalRefund = RouteResponse<typeof getInternalRefund>;
 export type Screening = RouteResponse<typeof createScreening>;
 export type ScreeningBody = RouteBody<typeof createScreening>;
 export type SimulateOutput = RouteResponse<typeof sandboxSimulateIntents>;
@@ -100,8 +106,15 @@ export function railsClient(o: PeerOptions & { baseUrl: string }): Rails {
 
 export interface Payments {
   createAgentAttempt(sessionId: string, payerWallet: string): Promise<AgentAttempt>;
-  /** The payer view of a session; fails with `client_secret_invalid` unless `secret` is the session's. */
+  /**
+   * The payer view of a session plus its account and mode (`getPayerCheckoutSession`, CR-15-15: service
+   * token + the caller's client secret); fails with `client_secret_invalid` unless `secret` is the session's.
+   */
+  payerSession(sessionId: string, secret: string): Promise<PayerSession>;
+  /** Stage 1 path: the public payer route with the client secret only (fallback, see `payerSession`). */
   publicSession(sessionId: string, secret: string): Promise<PublicSession>;
+  /** The refund as payments holds it (its current leg's issued `next_action`). */
+  refund(id: string): Promise<InternalRefund>;
 }
 
 export function paymentsClient(o: PeerOptions & { baseUrl: string }): Payments {
@@ -123,7 +136,20 @@ export function paymentsClient(o: PeerOptions & { baseUrl: string }): Payments {
     breaker: BREAKER,
     ...(o.fetch ? { fetch: o.fetch } : {}),
   });
+  const reads = httpClient({
+    target: "payments",
+    baseUrl: o.baseUrl,
+    timeoutMs: 2_000,
+    attempts: 2,
+    breaker: BREAKER,
+    serviceToken: o.serviceToken,
+    ...(o.fetch ? { fetch: o.fetch } : {}),
+  });
   return {
+    // CR-15-16: `call` adds the route-declared client-secret header and keeps agentpay's service token
+    payerSession: (id, secret) =>
+      reads.call(getPayerCheckoutSession, { params: { id }, headers: { "x-nearpay-client-secret": secret } }),
+    refund: (id) => reads.call(getInternalRefund, { params: { id }, timeoutMs: 1_000 }),
     createAgentAttempt: (id, payerWallet) =>
       internal.call(createAgentAttempt, { params: { id }, body: { payer_wallet: payerWallet } }),
     publicSession: async (id, secret) => {

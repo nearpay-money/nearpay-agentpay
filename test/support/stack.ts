@@ -18,6 +18,8 @@ import {
   type Execution,
   getExecution,
   getInternalAsset,
+  getInternalRefund,
+  getPayerCheckoutSession,
   getSettlementContext,
   INTERNAL_ROUTES,
   sandboxExecuteIntents,
@@ -52,6 +54,7 @@ import type { DB } from "../../src/infra/db/schema.js";
 import type { Batcher } from "../../src/relayer/batcher/batcher.js";
 import type { RelayerKey } from "../../src/relayer/key-pool/keys.js";
 import { type FakeRpc, startFakeRpc } from "./near-rpc.js";
+import { leg as buildLeg, type Leg, type LegOptions, type Signer } from "./refund.js";
 import { type RealSandbox, startSandbox } from "./sandbox.js";
 import { FakeVerifier, Rejection } from "./verifier.js";
 
@@ -84,6 +87,14 @@ export interface Session {
   attempt: Record<string, unknown> | null;
 }
 
+/** A refund leg from an Intents account: rails' execution and payments' refund (mutable for tests). */
+export interface RefundLeg extends Leg {
+  readonly refund: `re_${string}`;
+  execution: Execution;
+  /** payments' `Refund` as `getInternalRefund` returns it. */
+  object: Record<string, unknown>;
+}
+
 export interface Stack {
   readonly pg: Started;
   readonly admin: Database<DB>;
@@ -105,7 +116,12 @@ export interface Stack {
   readonly realSandbox: RealSandbox | null;
   readonly executions: Map<string, Execution>;
   readonly sessions: Map<string, Session>;
+  readonly refunds: Map<string, Record<string, unknown>>;
+  /** payments serves `getPayerCheckoutSession` (CR-15-15); false answers like a payments without the route. */
+  payerRoute: boolean;
   merchant(o?: MerchantOptions): Merchant;
+  /** Prepares a refund leg signed by `signer` (the merchant's Intents account) as rails and payments would. */
+  refundLeg(m: Merchant, signer: Signer, o?: Partial<LegOptions> & { livemode?: boolean }): RefundLeg;
   token(
     m: Merchant,
     o?: { livemode?: boolean; ptype?: "secret_key" | "restricted_key" | "session"; scp?: string[] },
@@ -218,10 +234,28 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
   // ---- payments: payer session reads (client secret) and agent attempts
   const sessions = new Map<string, Session>();
   const payments = await mockPeer({ service: "payments", routes: [...PUBLIC_ROUTES, ...INTERNAL_ROUTES] });
-  payments.on(getPublicCheckoutSession, async (ctx) => {
-    const s = sessions.get(ctx.params.id);
-    if (!s || s.secret !== ctx.headers["x-nearpay-client-secret"]) mockError("client_secret_invalid");
-    const ss = s as Session;
+  const refunds = new Map<string, Record<string, unknown>>();
+  const state = { payerRoute: true };
+  const payerView = (id: string, secret: string | undefined): Session => {
+    const s = sessions.get(id);
+    if (!s || s.secret !== secret) mockError("client_secret_invalid");
+    return s as Session;
+  };
+  payments.on(getPayerCheckoutSession, async (ctx) => {
+    if (!state.payerRoute)
+      mockError("resource_missing", { message: `Unrecognized request URL (GET ${ctx.params.id}).` });
+    const ss = payerView(ctx.params.id, ctx.headers["x-nearpay-client-secret"] as string | undefined);
+    return { account_id: ss.merchant.account, livemode: ss.livemode, session: publicSession(ss) } as never;
+  });
+  payments.on(getInternalRefund, async (ctx) => {
+    const r = refunds.get(ctx.params.id);
+    if (!r) mockError("resource_missing", { params: { object: "refund", id: ctx.params.id } });
+    return r as never;
+  });
+  payments.on(getPublicCheckoutSession, async (ctx) =>
+    publicSession(payerView(ctx.params.id, ctx.headers["x-nearpay-client-secret"] as string | undefined)),
+  );
+  function publicSession(ss: Session) {
     return {
       id: ss.id,
       object: "checkout_session",
@@ -241,7 +275,7 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
       cancel_url: null,
       attempt: ss.attempt as never,
     } as never;
-  });
+  }
   payments.on(createAgentAttempt, async (ctx) => {
     const s = sessions.get(ctx.params.id);
     if (!s) mockError("resource_missing", { params: { object: "checkout_session", id: ctx.params.id } });
@@ -439,6 +473,117 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
     realSandbox: real,
     executions,
     sessions,
+    refunds,
+    get payerRoute() {
+      return state.payerRoute;
+    },
+    set payerRoute(v: boolean) {
+      state.payerRoute = v;
+    },
+    refundLeg(m, signer, o = {}) {
+      const livemode = o.livemode ?? false;
+      const l = buildLeg(signer, { token: USDC_NEAR, amount: "1500000", ...o });
+      const refund = newId("re") as `re_${string}`;
+      const pi = newId("pi");
+      const x = execution({
+        account_id: m.account,
+        livemode,
+        kind: "refund",
+        method: "intents_transfer",
+        provider: "direct_intents",
+        route_class: "intents_transfer",
+        provider_status: null,
+        deposit: null,
+        intents_requirement: null,
+        origin: { asset_id: USDC_NEAR, chain: "near:mainnet", refund_to: signer.account, refund_type: "intents" },
+        settlement: {
+          asset_id: USDC_NEAR,
+          amount_base: l.transfer.amount,
+          tag: "0",
+          expected: l.transfer.amount,
+          recipient: l.transfer.receiver_id,
+          recipient_type: "intents",
+          chain: "near:mainnet",
+        },
+        reference: { payment_intent: pi, payment_attempt: null, refund, refund_leg: 1 },
+        refund: {
+          swap_type: null,
+          amount: l.transfer.amount,
+          amount_out_expected: l.transfer.amount,
+          min_amount_out: null,
+          token: null,
+          transfer: l.transfer,
+        },
+      } as never);
+      executions.set(x.id, x);
+      const now = Math.floor(Date.now() / 1000);
+      const object: Record<string, unknown> = {
+        id: refund,
+        object: "refund",
+        created: now,
+        livemode,
+        status: "requires_action",
+        payment_intent: pi,
+        payment_attempt: newId("pa"),
+        amount: l.transfer.amount,
+        asset_id: USDC_NEAR,
+        decimals: 6,
+        fee_mode: "payer_absorbs",
+        reason: "requested_by_customer",
+        method: "intents_transfer",
+        recipient: {
+          address: l.transfer.receiver_id,
+          asset_id: USDC_NEAR,
+          chain: "near:mainnet",
+          type: "intents",
+          overridden: false,
+        },
+        next_action: l.nextAction,
+        legs: [
+          {
+            number: 1,
+            status: "awaiting_signature",
+            method: "intents_transfer",
+            swap_type: null,
+            amount: l.transfer.amount,
+            amount_out_expected: l.transfer.amount,
+            deadline: l.nextAction.deadline,
+            submitted_tx: null,
+            duplicate: false,
+            evidence: null,
+            failure_code: null,
+            created: now,
+          },
+        ],
+        amount_received: null,
+        evidence: null,
+        extra_amount_sent: "0",
+        source: "api",
+        failure_code: null,
+        succeeded_at: null,
+        canceled_at: null,
+        sequence: 1,
+        metadata: {},
+      };
+      refunds.set(refund, object);
+      const rl: RefundLeg = {
+        ...l,
+        refund,
+        get execution() {
+          return executions.get(x.id) as Execution;
+        },
+        set execution(v: Execution) {
+          executions.set(x.id, v);
+        },
+        get object() {
+          return refunds.get(refund) as Record<string, unknown>;
+        },
+        set object(v: Record<string, unknown>) {
+          refunds.set(refund, v);
+        },
+      };
+      return rl;
+    },
     merchant(m = {}) {
       const acct = newId("acct");
       const payTo = m.payTo ?? `m${randomBytes(4).toString("hex")}.near`;

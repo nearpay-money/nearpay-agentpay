@@ -1,8 +1,10 @@
 /**
- * Live NEAR access for the facilitator (lld/agentpay.md §6 step 4, §7, §9). Simulation, nonce salt and
- * the signed relayer transaction come from `@nearpay-internal/intents`; submission and final status are
- * plain JSON-RPC here because the batcher records the transaction hash *before* sending (a timed-out
- * `send_tx` must stay traceable: the transaction may still execute, INV-3).
+ * Live NEAR access for the facilitator (lld/agentpay.md §6 step 4, §7, §9). Simulation, nonce salt, the
+ * signed relayer transaction and its submission come from `@nearpay-internal/intents`: the batcher signs
+ * with `buildExecuteTx`, records the transaction hash *before* sending, and sends the same bytes with
+ * `sendSignedTx` (kit 0.2.0, CR-15-16), so a timed-out `send_tx` stays traceable (the transaction may
+ * still execute, INV-3). Final status and block lookups stay plain JSON-RPC here (an unknown or
+ * not-yet-final transaction is a `null` status, not an error).
  *
  * | Call                     | Timeout |
  * |--------------------------|---------|
@@ -14,12 +16,12 @@
 import type { MultiPayload } from "@nearpay/spec";
 import {
   classifyVerifierError,
+  type ExecuteResult,
   type IntentExecuted,
   intentsExecuted,
   intentsRpc,
   RpcError,
   type SimulateIntentsOutput,
-  toBase64,
   VerifierError,
 } from "@nearpay-internal/intents";
 
@@ -93,6 +95,36 @@ export function summarize(txHash: string, o: FinalOutcome): TxOutcome {
   };
 }
 
+/** `send_tx` refusals that prove the transaction never executed (nothing to poll). */
+export const TX_REJECTED = /InvalidTxError|InvalidNonce|Expired|InvalidSignature|NotEnoughBalance|NotEnoughAllowance/;
+
+/**
+ * Classifies a failed `sendSignedTx`: a rejection only when every RPC provider refused the transaction
+ * as invalid (then it never executed); any timeout, transport failure or other answer from one provider
+ * means it may still land, so it stays an `RpcError` and the batcher polls its status (INV-3).
+ */
+export function sendFailure(e: unknown): Error {
+  if (e instanceof RpcError) {
+    const causes = e.causes.length ? e.causes : [e.message];
+    if (causes.every((c) => TX_REJECTED.test(c))) return new TxRejected(causes.join("; ").slice(0, 500));
+    return new RpcError(`send_tx: ${causes.join("; ").slice(0, 300)}`, e.causes);
+  }
+  // a Verifier panic or anything unexpected while sending: the outcome is unknown, poll it
+  return new RpcError(`send_tx: ${e instanceof Error ? e.message.slice(0, 300) : String(e)}`);
+}
+
+export function fromExecuteResult(r: ExecuteResult): TxOutcome {
+  return {
+    txHash: r.txHash,
+    status: r.status,
+    failure: r.failure,
+    logs: r.logs,
+    executed: r.intentsExecuted,
+    gasBurnt: r.gasBurnt,
+    blockHash: r.blockHash ?? null,
+  };
+}
+
 /** The Verifier rejection of a failed transaction ("Smart contract panicked: …"), classified like a simulation. */
 export function failureReason(failure: string | null): ReturnType<typeof classifyVerifierError> {
   return classifyVerifierError(failure ?? "");
@@ -140,15 +172,11 @@ export function nearChain(o: { rpcUrls: readonly string[]; contract: string; fet
       kit.buildExecuteTx(signed, { accountId: relayer.accountId, secretKey: relayer.secretKey }, gas, nonce),
 
     async send(bytes, txHash) {
-      const r = await call("send_tx", { signed_tx_base64: toBase64(bytes), wait_until: "FINAL" }, 10_000);
-      if (r.error !== undefined) {
-        const text = errorText(r.error);
-        // An invalid transaction never executes; a timeout/unknown status must be polled.
-        if (/InvalidTxError|InvalidNonce|Expired|InvalidSignature|NotEnoughBalance|NotEnoughAllowance/.test(text))
-          throw new TxRejected(text.slice(0, 500));
-        throw new RpcError(`send_tx: ${text.slice(0, 300)}`);
+      try {
+        return fromExecuteResult(await kit.sendSignedTx({ bytes, txHash, waitUntil: "FINAL", timeoutMs: 10_000 }));
+      } catch (e) {
+        throw sendFailure(e);
       }
-      return summarize(txHash, r.result as FinalOutcome);
     },
 
     async status(txHash, senderId) {

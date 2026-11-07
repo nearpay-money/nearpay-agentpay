@@ -19,6 +19,7 @@ import * as payments from "../app/agent-payments.js";
 import * as checkout from "../app/checkout.js";
 import type { Agentpay } from "../app/context.js";
 import { type Merchant, merchantOf } from "../app/merchant.js";
+import * as refunds from "../app/refunds.js";
 import { issueRequirements } from "../app/requirements.js";
 import { settle, supported, verify } from "../app/x402.js";
 
@@ -52,15 +53,21 @@ export function agentpayRoutes(ap: Agentpay): RouteBinding[] {
       respond(202, (await checkout.agentPay(ap, ctx.params.id, secretOf(ctx), ctx.body.signed)) as never),
     ),
 
-    // ---- internal (payments)
-    implement(relaySignedIntent, async (ctx) =>
-      respond(202, {
-        agent_payment_id: (await checkout.relayCheckout(ap, {
-          executionId: ctx.body.execution_id,
-          binding: ctx.body.binding,
-          signed: ctx.body.signed,
-        })) as `ap_${string}`,
-      }),
-    ),
+    // ---- internal (payments): checkout attempts and, since spec 0.2.0, Intents-account refund legs
+    implement(relaySignedIntent, async (ctx) => {
+      const b = ctx.body;
+      if (b.kind !== "refund" && b.refund !== undefined)
+        throw ApiError.invalid("refund is only accepted with kind refund", "refund");
+      const id =
+        b.kind === "refund"
+          ? await refunds.relayRefund(ap, {
+              executionId: b.execution_id,
+              binding: b.binding,
+              signed: b.signed,
+              refund: b.refund,
+            })
+          : await checkout.relayCheckout(ap, { executionId: b.execution_id, binding: b.binding, signed: b.signed });
+      return respond(202, { agent_payment_id: id as `ap_${string}` });
+    }),
   ];
 }
