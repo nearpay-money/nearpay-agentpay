@@ -31,6 +31,7 @@ export const agentPaymentRow = (o: Partial<AgentPaymentRow> = {}): AgentPaymentR
   block_height: 180_000_000n,
   error_reason: null,
   execution_id: null,
+  refund_id: null,
   created_at: now,
   updated_at: now,
   settled_at: now,

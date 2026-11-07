@@ -1,4 +1,4 @@
-/** Kysely table types (migrations/0001_agentpay.sql, 0002_settle_reported.sql). numeric(78,0) columns read as decimal strings. */
+/** Kysely table types (migrations/0001_agentpay.sql, 0002_settle_reported.sql, 0003_refund_relay.sql). numeric(78,0) columns read as decimal strings. */
 import type { ColumnType, KitTables } from "@nearpay-internal/db";
 import type { AgentPaymentKind, AgentPaymentStatus } from "../../domain/facilitator-payment/status.js";
 
@@ -73,7 +73,8 @@ export interface AgentPaymentsTable {
   binding: string;
   payer: string;
   pay_to: string;
-  fee_to: string;
+  /** Null for refund legs (no NearPay fee; 0003). */
+  fee_to: Opt<string>;
   payload_hash: Buffer;
   payload: Json<unknown>;
   standard: string;
@@ -92,6 +93,8 @@ export interface AgentPaymentsTable {
   block_height: OptBig;
   error_reason: Opt<string>;
   execution_id: Opt<string>;
+  /** payments refund (`re_…` uuid) of a `refund` relay (0003). */
+  refund_id: Opt<string>;
   created_at: Timestamp;
   updated_at: Timestamp;
   settled_at: OptTimestamp;

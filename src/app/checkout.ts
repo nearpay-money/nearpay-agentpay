@@ -27,16 +27,41 @@ import { transition } from "./ledger.js";
 import { killSwitchEngaged, killSwitchError } from "./merchant.js";
 import { railUnavailable, simulate, VerifierUnavailable } from "./verifier.js";
 
-const invalidIntent = (reason: string) => new ApiError("intent_invalid", { params: { reason } });
+export const invalidIntent = (reason: string) => new ApiError("intent_invalid", { params: { reason } });
 
-/** Session as the payer sees it; payments verifies the client secret. */
-async function payerSession(ap: Agentpay, sessionId: string, secret: string | undefined): Promise<PublicSession> {
+/** A session as the payer sees it; `account`/`livemode` are known when payments' internal route answered. */
+export interface PayerView {
+  readonly session: PublicSession;
+  /** Account uuid and mode of the session (CR-15-15), null from the Stage 1 public route. */
+  readonly scope: { readonly account: string; readonly livemode: boolean } | null;
+}
+
+const secretRefused = (u: ReturnType<typeof upstreamCode>) => u.status === 401 || u.code === "client_secret_invalid";
+
+/**
+ * The session as the payer sees it; payments verifies the client secret (lld/agentpay.md §5). Stage 2
+ * reads payments' internal `getPayerCheckoutSession` with agentpay's service token and the forwarded
+ * secret (CR-15-15). While payments does not serve that route yet (an unrecognised URL answers
+ * `404 resource_missing`), the Stage 1 public route is used; it checks the secret just the same.
+ */
+export async function payerSession(ap: Agentpay, sessionId: string, secret: string | undefined): Promise<PayerView> {
   if (!secret) throw new ApiError("client_secret_invalid");
   try {
-    return await ap.payments.publicSession(sessionId, secret);
+    const r = await ap.payments.payerSession(sessionId, secret);
+    if (r.session.id !== sessionId) throw railUnavailable("checkout answered for another session");
+    return { session: r.session, scope: { account: toUuid(r.account_id, "acct"), livemode: r.livemode } };
+  } catch (e) {
+    if (e instanceof ApiError) throw e;
+    const u = upstreamCode(e);
+    if (secretRefused(u)) throw new ApiError("client_secret_invalid");
+    if (!(u.status === 404 && u.code === "resource_missing")) throw railUnavailable("checkout unavailable");
+    ap.log.warn({ session: sessionId }, "payments has no getPayerCheckoutSession yet; using the public payer route");
+  }
+  try {
+    return { session: await ap.payments.publicSession(sessionId, secret), scope: null };
   } catch (e) {
     const u = upstreamCode(e);
-    if (u.status === 401 || u.status === 404 || u.code === "client_secret_invalid" || u.code === "resource_missing")
+    if (secretRefused(u) || u.status === 404 || u.code === "resource_missing")
       throw new ApiError("client_secret_invalid");
     throw railUnavailable("checkout unavailable");
   }
@@ -57,7 +82,7 @@ export async function agentPayRequirements(
   secret: string | undefined,
   payer: string,
 ): Promise<z.input<typeof AgentPayRequirements>> {
-  const s = await payerSession(ap, sessionId, secret);
+  const { session: s, scope } = await payerSession(ap, sessionId, secret);
   if (s.status !== "open") throw new ApiError("session_not_open");
   let r: Awaited<ReturnType<Agentpay["payments"]["createAgentAttempt"]>>;
   try {
@@ -68,6 +93,9 @@ export async function agentPayRequirements(
       throw new ApiError(u.code as "session_not_open", u.message ? { message: u.message } : {});
     throw railUnavailable(u.timeout ? "checkout timeout" : "checkout unavailable");
   }
+  // the attempt must belong to the session's account and mode (known from the internal payer route)
+  if (scope && (toUuid(r.account_id, "acct") !== scope.account || r.livemode !== scope.livemode))
+    throw railUnavailable("checkout answered for another account or mode");
   const req = r.intents_requirement;
   const values = {
     account_id: toUuid(r.account_id, "acct"),
@@ -101,7 +129,7 @@ export interface RelayInput {
   readonly sessionId?: string | null;
 }
 
-async function execution(ap: Agentpay, id: string): Promise<Execution> {
+export async function execution(ap: Agentpay, id: string): Promise<Execution> {
   try {
     return await ap.rails.getExecution(id);
   } catch (e) {
@@ -111,12 +139,29 @@ async function execution(ap: Agentpay, id: string): Promise<Execution> {
   }
 }
 
-const byHash = (ap: Agentpay, hash: Buffer) =>
+export const byHash = (ap: Agentpay, hash: Buffer) =>
   ap.db.selectFrom("agent_payments").selectAll().where("payload_hash", "=", hash).executeTakeFirst();
 
-function isUniqueViolation(e: unknown, constraint: string): boolean {
+export function isUniqueViolation(e: unknown, constraint: string): boolean {
   const pg = e as { code?: string; constraint?: string };
   return pg?.code === "23505" && pg.constraint === constraint;
+}
+
+/** `simulate_intents` for a relay: a short balance is `insufficient_balance`, any other rejection `intent_invalid`. */
+export async function simulateForRelay(ap: Agentpay, livemode: boolean, signed: MultiPayload): Promise<void> {
+  let sim: Awaited<ReturnType<typeof simulate>>;
+  try {
+    sim = await simulate(ap, livemode, [signed]);
+  } catch (e) {
+    if (e instanceof VerifierUnavailable) throw railUnavailable("verifier unavailable");
+    throw e;
+  }
+  if (!sim.ok) {
+    const code = relayCode(sim.reason);
+    throw code === "insufficient_balance"
+      ? new ApiError("insufficient_balance")
+      : invalidIntent(sim.reason === "nonce_used" ? "nonce already used" : sim.detail);
+  }
 }
 
 /** Validates and queues a payer-signed checkout payload; returns the agent payment id (`ap_…`). */
@@ -124,13 +169,13 @@ export async function relayCheckout(ap: Agentpay, input: RelayInput): Promise<st
   const hash = Buffer.from(payloadHash(input.signed));
   const existing = await byHash(ap, hash);
   if (existing) {
-    if (existing.execution_id !== input.executionId)
+    if (existing.execution_id !== input.executionId || existing.kind !== "checkout")
       throw invalidIntent("this payload was relayed for another payment");
     return fromUuid("ap", existing.id);
   }
   const ex = await execution(ap, input.executionId);
   const req = ex.intents_requirement;
-  if (ex.method !== "intents_transfer" || !req || req.binding !== input.binding)
+  if (ex.kind !== "payment" || ex.method !== "intents_transfer" || !req || req.binding !== input.binding)
     throw invalidIntent("the binding does not belong to this execution");
   if (ex.state !== "awaiting_deposit") throw invalidIntent(`the payment is ${ex.state}`);
   if (ex.livemode && (await killSwitchEngaged(ap))) throw killSwitchError();
@@ -153,19 +198,7 @@ export async function relayCheckout(ap: Agentpay, input: RelayInput): Promise<st
   );
   if (!match.ok) throw invalidIntent(match.detail);
 
-  let sim: Awaited<ReturnType<typeof simulate>>;
-  try {
-    sim = await simulate(ap, ex.livemode, [input.signed]);
-  } catch (e) {
-    if (e instanceof VerifierUnavailable) throw railUnavailable("verifier unavailable");
-    throw e;
-  }
-  if (!sim.ok) {
-    const code = relayCode(sim.reason);
-    throw code === "insufficient_balance"
-      ? new ApiError("insufficient_balance")
-      : invalidIntent(sim.reason === "nonce_used" ? "nonce already used" : sim.detail);
-  }
+  await simulateForRelay(ap, ex.livemode, input.signed);
 
   const sessionId =
     input.sessionId ??
@@ -254,7 +287,7 @@ function attemptView(
 }
 
 export async function agentPay(ap: Agentpay, sessionId: string, secret: string | undefined, signed: MultiPayload) {
-  const s = await payerSession(ap, sessionId, secret);
+  const { session: s, scope } = await payerSession(ap, sessionId, secret);
   const v = verifySigned(signed);
   if (!v.ok) throw invalidIntent(v.reason === "invalid_signature" ? "invalid signature" : v.detail);
   const binding = claimedBinding(v.message);
@@ -266,6 +299,8 @@ export async function agentPay(ap: Agentpay, sessionId: string, secret: string |
     .where("checkout_session_id", "=", toUuid(sessionId, "cs"))
     .executeTakeFirst();
   if (!cr) throw invalidIntent("unknown requirement for this session; request agent_pay/requirements first");
+  if (scope && (cr.account_id !== scope.account || cr.livemode !== scope.livemode))
+    throw invalidIntent("unknown requirement for this session; request agent_pay/requirements first");
   if (s.status === "complete" || s.status === "expired") throw new ApiError("session_not_open");
   const agentPayment = await relayCheckout(ap, {
     executionId: cr.execution_id,

@@ -1,5 +1,5 @@
 /**
- * Contract (foundations §16): every Stage-1 agentpay route is bound (and nothing else); every subject
+ * Contract (foundations §16): every agentpay route up to Stage 2 is bound (and nothing else); every subject
  * the catalogue routes to agentpay is handled; every subject agentpay produces is emitted; the objects
  * agentpay serves and emits parse with the spec schemas; the x402 shapes round-trip the header codec.
  */
@@ -8,16 +8,24 @@ import { join } from "node:path";
 import {
   AgentPayment,
   decodeX402Header,
+  ERRORS,
   encodeX402Header,
   PaymentRequired,
   PUBLIC_ROUTES,
+  SERVICE_CLIENT_SCOPES,
   SettleResponse,
   SupportedResponse,
 } from "@nearpay/spec";
 import { unhandledSubjects } from "@nearpay-internal/bus";
 import { uuidv7 } from "@nearpay-internal/ids";
 import { unimplementedRoutes } from "@nearpay-internal/service";
-import { INTERNAL_ROUTES, SUBJECTS, type Subject } from "@nearpay-internal/spec";
+import {
+  getPayerCheckoutSession,
+  INTERNAL_ROUTES,
+  relaySignedIntent,
+  SUBJECTS,
+  type Subject,
+} from "@nearpay-internal/spec";
 import { USDC_NEAR } from "@nearpay-internal/testing";
 import { describe, expect, it } from "vitest";
 import { agentpayRoutes } from "../../src/api/routes.js";
@@ -29,15 +37,36 @@ import { agentPaymentRow } from "../support/rows.js";
 
 const ALL = [...PUBLIC_ROUTES, ...INTERNAL_ROUTES];
 
+/** A well-formed raw-ed25519 MultiPayload (shape only). */
+const SIGNED = {
+  standard: "raw_ed25519",
+  payload: "{}",
+  public_key: "ed25519:4zvwRjXUKGfvwnParsHAS3HuSVzV5cA4McphgmoCtajS",
+  signature: `ed25519:${"1".repeat(64)}`,
+};
+
 describe("routes and events", () => {
-  it("binds every Stage-1 agentpay route, and nothing else", () => {
+  it("binds every agentpay route up to Stage 2, and nothing else", () => {
     const bindings = agentpayRoutes({} as never);
     expect(unimplementedRoutes("agentpay", ALL, bindings).map((r) => r.id)).toEqual([]);
     expect(bindings.map((b) => b.route.id).sort()).toEqual(
-      ALL.filter((r) => r.service === "agentpay" && r.stage <= 1)
+      ALL.filter((r) => r.service === "agentpay" && r.stage <= 2)
         .map((r) => r.id)
         .sort(),
     );
+  });
+
+  it("relaySignedIntent (spec 0.2.0) takes kind refund with a refund id, and payments' payer route answers with account and mode", () => {
+    const body = relaySignedIntent.body as unknown as { safeParse(v: unknown): { success: boolean } };
+    const base = { execution_id: `ex_${"0".repeat(26)}`, binding: `np1:${"1".repeat(44)}`, signed: SIGNED };
+    expect(body.safeParse({ ...base, kind: "refund", refund: `re_${"0".repeat(26)}` }).success).toBe(true);
+    expect(body.safeParse({ ...base, kind: "checkout" }).success).toBe(true);
+    expect(body.safeParse(base).success).toBe(true);
+    expect(body.safeParse({ ...base, kind: "payout" }).success).toBe(false);
+    expect(relaySignedIntent.errors).toEqual(expect.arrayContaining(["intent_invalid", "rail_unavailable"]));
+    expect(getPayerCheckoutSession.auth).toEqual(["service:payments.read"]);
+    expect(SERVICE_CLIENT_SCOPES.agentpay).toContain("payments.read");
+    expect(ERRORS.signed_intent_mismatch.status).toBe(422);
   });
 
   it("handles every subject the catalogue routes to agentpay", () => {
@@ -73,6 +102,17 @@ describe("objects", () => {
         checkout_session_id: uuidv7(),
         resource_url: null,
         execution_id: `ex_${"0".repeat(26)}`,
+      }),
+      // Stage 2: a merchant-signed refund leg (no fee recipient, no fee)
+      row({
+        kind: "refund",
+        payer: "merchant.near",
+        pay_to: "payer.near",
+        fee_to: null,
+        fee_amount: "0",
+        resource_url: null,
+        execution_id: `ex_${"0".repeat(26)}`,
+        refund_id: uuidv7(),
       }),
     ]) {
       const v = agentPaymentView(r);
