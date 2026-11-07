@@ -149,7 +149,7 @@ describe("agent_pay", () => {
     expect(r4.body.error.code).toBe("destination_not_intents_account");
   });
 
-  it("reads the payer session through payments' internal route, falling back to the public one", async () => {
+  it("reads the payer session through payments' internal route only", async () => {
     const cs = s.session(m);
     const p = payer();
     const before = { internal: s.payments.callsTo(getPayerCheckoutSession).length, pub: publicCalls() };
@@ -160,17 +160,29 @@ describe("agent_pay", () => {
     expect(internal[0]?.headers["x-nearpay-client-secret"]).toBe(cs.secret);
     expect(internal[0]?.principal).toMatchObject({ ptype: "service", sub: "agentpay" });
     expect(publicCalls()).toBe(before.pub);
-    // a payments without getPayerCheckoutSession (unrecognised URL) still works through the public route
+  });
+
+  it("a 404 from the internal payer route is an error, never a fallback to the unscoped public route (audit finding 11)", async () => {
+    const p = funded(payer());
+    const cs = s.session(m);
+    const req = await requirements(cs, p);
+    const before = publicCalls();
+    // payments answers 404 resource_missing (e.g. an older payments without getPayerCheckoutSession)
     s.payerRoute = false;
     try {
       const cs2 = s.session(m);
-      await requirements(cs2, p);
-      expect(publicCalls()).toBe(before.pub + 1);
-      const wrong = await s.call("POST", `/v1/checkout/sessions/${cs2.id}/agent_pay/requirements`, {
-        secret: `${cs2.id}_secret_${"Z".repeat(32)}`,
+      const r = await s.call("POST", `/v1/checkout/sessions/${cs2.id}/agent_pay/requirements`, {
+        secret: cs2.secret,
         body: { payer: p.account },
       });
-      expect([wrong.status, wrong.body.error.code]).toEqual([401, "client_secret_invalid"]);
+      expect([r.status, r.body.error.code]).toEqual([503, "rail_unavailable"]);
+      const pay = await s.call("POST", `/v1/checkout/sessions/${cs.id}/agent_pay`, {
+        secret: cs.secret,
+        body: { signed: p.sign(terms(req.requirement)) },
+      });
+      expect([pay.status, pay.body.error.code]).toEqual([503, "rail_unavailable"]);
+      // the public route (no account/mode scope) is never consulted
+      expect(publicCalls()).toBe(before);
     } finally {
       s.payerRoute = true;
     }
