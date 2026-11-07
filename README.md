@@ -120,7 +120,7 @@ keys; tests never reach mainnet.
   (idempotent on the payload hash). Recorded as a `refund` agent payment (`payer` = merchant signer, `pay_to` = receiver,
   no fee, `refund_id`); no events (rails' indexer verifies the payer side). Live refund relays stop under the kill switch.
 - **Payer sessions** come from payments' `getPayerCheckoutSession` (CR-15-15; service token + forwarded client
-  secret); the public payer route is used only while payments answers `404 resource_missing` for that route.
+  secret) only; no fallback to the unscoped public route — any other answer, a `404` included, is `503 rail_unavailable`.
 - **Live send** uses kit `sendSignedTx` (CR-15-16) on the bytes whose hash was stored first; a send is "rejected"
   only when every RPC provider refused it as invalid, otherwise its status is polled.
 

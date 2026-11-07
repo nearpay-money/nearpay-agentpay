@@ -15,8 +15,7 @@
  * | sandbox `/sim/intents/*` (test mode)                 | 3 s / 10 s | 1     | no      |
  */
 
-import type { RouteBody, RouteResponse } from "@nearpay/spec";
-import { getPublicCheckoutSession, PublicCheckoutSession } from "@nearpay/spec";
+import type { getPublicCheckoutSession, RouteBody, RouteResponse } from "@nearpay/spec";
 import { HttpError, httpClient, TimeoutError } from "@nearpay-internal/http";
 import {
   createAgentAttempt,
@@ -111,8 +110,6 @@ export interface Payments {
    * token + the caller's client secret); fails with `client_secret_invalid` unless `secret` is the session's.
    */
   payerSession(sessionId: string, secret: string): Promise<PayerSession>;
-  /** Stage 1 path: the public payer route with the client secret only (fallback, see `payerSession`). */
-  publicSession(sessionId: string, secret: string): Promise<PublicSession>;
   /** The refund as payments holds it (its current leg's issued `next_action`). */
   refund(id: string): Promise<InternalRefund>;
 }
@@ -125,15 +122,6 @@ export function paymentsClient(o: PeerOptions & { baseUrl: string }): Payments {
     attempts: 1,
     breaker: BREAKER,
     serviceToken: o.serviceToken,
-    ...(o.fetch ? { fetch: o.fetch } : {}),
-  });
-  // the payer route authenticates with the client secret only (no service token)
-  const payer = httpClient({
-    target: "payments",
-    baseUrl: o.baseUrl,
-    timeoutMs: 2_000,
-    attempts: 2,
-    breaker: BREAKER,
     ...(o.fetch ? { fetch: o.fetch } : {}),
   });
   const reads = httpClient({
@@ -152,14 +140,6 @@ export function paymentsClient(o: PeerOptions & { baseUrl: string }): Payments {
     refund: (id) => reads.call(getInternalRefund, { params: { id }, timeoutMs: 1_000 }),
     createAgentAttempt: (id, payerWallet) =>
       internal.call(createAgentAttempt, { params: { id }, body: { payer_wallet: payerWallet } }),
-    publicSession: async (id, secret) => {
-      const res = await payer.request({
-        method: getPublicCheckoutSession.method,
-        path: `/v1/checkout/sessions/${encodeURIComponent(id)}/public`,
-        headers: { "x-nearpay-client-secret": secret },
-      });
-      return PublicCheckoutSession.parse(res.body);
-    },
   };
 }
 

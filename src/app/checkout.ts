@@ -29,20 +29,21 @@ import { railUnavailable, simulate, VerifierUnavailable } from "./verifier.js";
 
 export const invalidIntent = (reason: string) => new ApiError("intent_invalid", { params: { reason } });
 
-/** A session as the payer sees it; `account`/`livemode` are known when payments' internal route answered. */
+/** A session as the payer sees it, with the account and mode payments' internal route reports for it. */
 export interface PayerView {
   readonly session: PublicSession;
-  /** Account uuid and mode of the session (CR-15-15), null from the Stage 1 public route. */
-  readonly scope: { readonly account: string; readonly livemode: boolean } | null;
+  /** Account uuid and mode of the session (CR-15-15). */
+  readonly scope: { readonly account: string; readonly livemode: boolean };
 }
 
 const secretRefused = (u: ReturnType<typeof upstreamCode>) => u.status === 401 || u.code === "client_secret_invalid";
 
 /**
- * The session as the payer sees it; payments verifies the client secret (lld/agentpay.md §5). Stage 2
- * reads payments' internal `getPayerCheckoutSession` with agentpay's service token and the forwarded
- * secret (CR-15-15). While payments does not serve that route yet (an unrecognised URL answers
- * `404 resource_missing`), the Stage 1 public route is used; it checks the secret just the same.
+ * The session as the payer sees it; payments verifies the client secret (lld/agentpay.md §5). Read only from
+ * payments' internal `getPayerCheckoutSession` with agentpay's service token and the forwarded secret (CR-15-15), so
+ * the account and mode are always known. There is no fallback to the Stage 1 public route (it carries no account or
+ * mode, which skipped the scope checks — audit finding 11): any other answer, `404 resource_missing` included
+ * (payments answers `401` for an unknown session), is `503 rail_unavailable` (fail closed).
  */
 export async function payerSession(ap: Agentpay, sessionId: string, secret: string | undefined): Promise<PayerView> {
   if (!secret) throw new ApiError("client_secret_invalid");
@@ -54,15 +55,7 @@ export async function payerSession(ap: Agentpay, sessionId: string, secret: stri
     if (e instanceof ApiError) throw e;
     const u = upstreamCode(e);
     if (secretRefused(u)) throw new ApiError("client_secret_invalid");
-    if (!(u.status === 404 && u.code === "resource_missing")) throw railUnavailable("checkout unavailable");
-    ap.log.warn({ session: sessionId }, "payments has no getPayerCheckoutSession yet; using the public payer route");
-  }
-  try {
-    return { session: await ap.payments.publicSession(sessionId, secret), scope: null };
-  } catch (e) {
-    const u = upstreamCode(e);
-    if (secretRefused(u) || u.status === 404 || u.code === "resource_missing")
-      throw new ApiError("client_secret_invalid");
+    if (u.status === 404) ap.log.error({ session: sessionId }, "payments answered 404 on getPayerCheckoutSession");
     throw railUnavailable("checkout unavailable");
   }
 }
@@ -94,7 +87,7 @@ export async function agentPayRequirements(
     throw railUnavailable(u.timeout ? "checkout timeout" : "checkout unavailable");
   }
   // the attempt must belong to the session's account and mode (known from the internal payer route)
-  if (scope && (toUuid(r.account_id, "acct") !== scope.account || r.livemode !== scope.livemode))
+  if (toUuid(r.account_id, "acct") !== scope.account || r.livemode !== scope.livemode)
     throw railUnavailable("checkout answered for another account or mode");
   const req = r.intents_requirement;
   const values = {
@@ -305,7 +298,7 @@ export async function agentPay(ap: Agentpay, sessionId: string, secret: string |
     .where("checkout_session_id", "=", toUuid(sessionId, "cs"))
     .executeTakeFirst();
   if (!cr) throw invalidIntent("unknown requirement for this session; request agent_pay/requirements first");
-  if (scope && (cr.account_id !== scope.account || cr.livemode !== scope.livemode))
+  if (cr.account_id !== scope.account || cr.livemode !== scope.livemode)
     throw invalidIntent("unknown requirement for this session; request agent_pay/requirements first");
   if (s.status === "complete" || s.status === "expired") throw new ApiError("session_not_open");
   const agentPayment = await relayCheckout(ap, {
