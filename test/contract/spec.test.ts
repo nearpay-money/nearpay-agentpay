@@ -1,5 +1,5 @@
 /**
- * Contract (foundations §16): every agentpay route up to Stage 2 is bound (and nothing else); every subject
+ * Contract (foundations §16): every agentpay route up to Stage 3 is bound (and nothing else); every subject
  * the catalogue routes to agentpay is handled; every subject agentpay produces is emitted; the objects
  * agentpay serves and emits parse with the spec schemas; the x402 shapes round-trip the header codec.
  */
@@ -10,21 +10,30 @@ import {
   decodeX402Header,
   ERRORS,
   encodeX402Header,
+  NearIntentsPaymentPayload,
+  NearIntentsSettleResponse,
+  NearIntentsVerifyResponse,
   PaymentRequired,
   PUBLIC_ROUTES,
   SERVICE_CLIENT_SCOPES,
   SettleResponse,
   SupportedResponse,
+  X402PaymentRequiredAny,
+  x402NearIntentsRequirements,
+  x402NearIntentsSettle,
+  x402NearIntentsVerify,
 } from "@nearpay/spec";
 import { unhandledSubjects } from "@nearpay-internal/bus";
 import { uuidv7 } from "@nearpay-internal/ids";
 import { unimplementedRoutes } from "@nearpay-internal/service";
 import {
+  createExecution,
   getPayerCheckoutSession,
   INTERNAL_ROUTES,
   relaySignedIntent,
   SUBJECTS,
   type Subject,
+  submitExecutionDepositTx,
 } from "@nearpay-internal/spec";
 import { USDC_NEAR } from "@nearpay-internal/testing";
 import { describe, expect, it } from "vitest";
@@ -34,6 +43,7 @@ import { agentPaymentView } from "../../src/app/views.js";
 import { settleView, supported } from "../../src/app/x402.js";
 import { agentpayHandlers } from "../../src/consumers/handlers.js";
 import { agentPaymentRow } from "../support/rows.js";
+import { NEAR_INTENTS_VECTORS } from "../support/vectors.js";
 
 const ALL = [...PUBLIC_ROUTES, ...INTERNAL_ROUTES];
 
@@ -46,11 +56,11 @@ const SIGNED = {
 };
 
 describe("routes and events", () => {
-  it("binds every agentpay route up to Stage 2, and nothing else", () => {
+  it("binds every agentpay route up to Stage 3, and nothing else", () => {
     const bindings = agentpayRoutes({} as never);
     expect(unimplementedRoutes("agentpay", ALL, bindings).map((r) => r.id)).toEqual([]);
     expect(bindings.map((b) => b.route.id).sort()).toEqual(
-      ALL.filter((r) => r.service === "agentpay" && r.stage <= 2)
+      ALL.filter((r) => r.service === "agentpay" && r.stage <= 3)
         .map((r) => r.id)
         .sort(),
     );
@@ -168,5 +178,79 @@ describe("objects", () => {
     for (const relayerAccount of ["relayer.nearpay.near", null])
       expect(SupportedResponse.safeParse(supported({ settings: { relayerAccount } } as never)).success).toBe(true);
     expect(PaymentRequired.shape.x402Version.value).toBe(2);
+  });
+});
+
+// ---------------------------------------------------------------------------------------------- Stage 3
+
+describe("near-intents (spec 0.3.0)", () => {
+  it("agentpay holds rails.executions.write and consumes its rails execution subjects", () => {
+    expect(SERVICE_CLIENT_SCOPES.agentpay).toContain("rails.executions.write");
+    expect(createExecution.auth).toEqual(["service:rails.executions.write"]);
+    expect(submitExecutionDepositTx.auth).toEqual(["service:rails.executions.write"]);
+    const handlers = agentpayHandlers({} as never);
+    for (const s of [
+      "evt.rails.execution.settled",
+      "evt.rails.execution.refunded",
+      "evt.rails.execution.failed",
+    ] as const)
+      expect(handlers[s]).toBeTypeOf("function");
+    expect(handlers["evt.rails.execution.held"]).toBeUndefined();
+    expect(handlers["evt.rails.execution.updated"]).toBeUndefined();
+  });
+
+  it("near-intents agent payments parse (API and events) with transfer_method and origin; older rows say intents-transfer", () => {
+    const origin = {
+      network: "eip155:8453",
+      asset_id: "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near",
+      amount_in: "1012000",
+      refund_to: "0x2527D02599Ba641c19Fea793Cd0f9A6e8457c317",
+      deposit_address: "0x76b4c56085ED136a8744D52bE956396624a730E8",
+      deposit_memo: null,
+      tx_hashes: ["0x9bcff372aee89b648c922b850573b22387c31d693079f5e37cd255814e2d615a"],
+      fee: { amount: "5000", asset_id: "nep141:base-0x833589fcd6edb6e08f4c7c32d4f71b54bda02913.omft.near" },
+    };
+    const r = row({
+      transfer_method: "near-intents",
+      origin,
+      payer: "solver.near",
+      fee_to: null,
+      fee_amount: "0",
+      payload_hash: null,
+      payload: null,
+      standard: null,
+      nonces: null,
+      deadline: null,
+      batch_id: null,
+      execution_id: `ex_${"0".repeat(26)}`,
+      version: 1,
+    });
+    const v = AgentPayment.parse(agentPaymentView(r));
+    expect(v.transfer_method).toBe("near-intents");
+    expect(v.origin).toEqual(origin);
+    expect(v.fee_amount).toBe("0");
+    expect(SUBJECTS["evt.agentpay.agent_payment.settled"].object.parse(agentPaymentView(r))).toHaveProperty("origin");
+    const old = AgentPayment.parse(agentPaymentView(row()));
+    expect(old.transfer_method).toBe("intents-transfer");
+    expect(old.origin).toBeNull();
+  });
+
+  it("every near-intents header of the spec vectors parses and travels in its header", () => {
+    const h = NEAR_INTENTS_VECTORS.headers;
+    for (const k of ["payment_required_unquoted", "payment_required_quoted"]) {
+      const v = X402PaymentRequiredAny.parse(h[k]);
+      expect(decodeX402Header(encodeX402Header(v))).toEqual(v);
+    }
+    for (const k of ["payment_signature_quote", "payment_signature_deposit"]) NearIntentsPaymentPayload.parse(h[k]);
+    NearIntentsVerifyResponse.parse(h.verify_response_quote);
+    for (const k of ["payment_response_settled", "payment_response_pending", "payment_response_failed"])
+      NearIntentsSettleResponse.parse(h[k]);
+    const routes = [x402NearIntentsRequirements, x402NearIntentsVerify, x402NearIntentsSettle];
+    expect(routes.map((r) => r.path)).toEqual([
+      "/x402/near-intents/requirements",
+      "/x402/near-intents/verify",
+      "/x402/near-intents/settle",
+    ]);
+    for (const r of routes) expect(r.idempotent).toBe(false);
   });
 });

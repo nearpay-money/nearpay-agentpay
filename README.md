@@ -27,7 +27,7 @@ This repo stays surgical: design docs live in [`nearpay-brain`](../nearpay-brain
 
 ```
 nearpay-agentpay/
-├── migrations/                 0001_agentpay.sql (Stage 1 tables), 0002 settle reported, 0003 refund relay
+├── migrations/                 0001_agentpay.sql (Stage 1 tables), 0002 settle reported, 0003 refund relay, 0004 near-intents
 ├── src/
 │   ├── api/                    spec route bindings
 │   ├── app/                    use cases: requirements, x402 verify/settle, checkout agent pay + relay, reads
@@ -61,27 +61,31 @@ keys; tests never reach mainnet.
 
 ## Configuration
 
-| Variable                                                                  | Default                 | Meaning                                                                                    |
-| ------------------------------------------------------------------------- | ----------------------- | ------------------------------------------------------------------------------------------ |
-| `NP_DB_URL_FILE`                                                          | —                       | app-role database URL (migrate: migrator role)                                             |
-| `NP_IDENTITY_URL`, `NP_PAYMENTS_URL`, `NP_RAILS_URL`, `NP_COMPLIANCE_URL` | —                       | peers (§10 timeouts)                                                                       |
-| `NP_SANDBOX_BASE_URL`                                                     | unset                   | test mode Verifier (`/sim/intents/*`); unset refuses test payloads                         |
-| `NP_NEAR_RPC_URLS`                                                        | empty                   | live Verifier: simulate, `send_tx`, status (tried in order); empty refuses live payloads   |
-| `NP_INTENTS_CONTRACT`                                                     | `intents.near`          | Verifier contract                                                                          |
-| `NP_TREASURY_ACCOUNT`                                                     | unset                   | live fee recipient; unset refuses live requirements                                        |
-| `NP_TEST_TREASURY_ACCOUNT`                                                | `treasury.nearpay.near` | test fee recipient (sandbox only)                                                          |
-| `NP_RELAYER_ACCOUNT`                                                      | unset                   | relayer account (advertised in `/x402/supported`)                                          |
-| `NP_RELAYER_KEY_FILES`                                                    | unset                   | batcher: function-call key files, `*` in the file name (e.g. `/run/secrets/relayer_key_*`) |
-| `NP_GAS_PER_PAYLOAD_TGAS`                                                 | 15                      | batch size `floor(240 / n)`, gas `k × n + 20` Tgas                                         |
-| `NP_SETTLE_WAIT_MS`                                                       | 8000                    | settle waits this long for finality                                                        |
-| `NP_REQUIREMENT_TTL_MAX_S`                                                | 300                     | ceiling for `max_timeout_s`                                                                |
-| `NP_REQUIREMENT_RATE_PER_S`                                               | 200                     | requirement issuance per merchant per second                                               |
-| `NP_PAYER_RATE_PER_S`                                                     | 10                      | verifications per payer per second (account quota: `quotas.rps`, default 50)               |
-| `NP_SERVICE_CLIENT_SECRET_FILE`                                           | —                       | client credentials for service tokens                                                      |
-| `NP_PII_KEK_FILE`                                                         | —                       | 32-byte KEK for the idempotency store                                                      |
-| `NP_VALKEY_URL`                                                           | unset                   | settle waiters (`ap:<id>`) and quotas across replicas; in-process without it               |
-| `NP_NATS_URL`                                                             | —                       | batcher: events (kill switch in, agent payments out)                                       |
-| `NP_BATCH_TICK_MS`                                                        | 150                     | batcher tick                                                                               |
+| Variable                                                                  | Default                             | Meaning                                                                                                                                                             |
+| ------------------------------------------------------------------------- | ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `NP_DB_URL_FILE`                                                          | —                                   | app-role database URL (migrate: migrator role)                                                                                                                      |
+| `NP_IDENTITY_URL`, `NP_PAYMENTS_URL`, `NP_RAILS_URL`, `NP_COMPLIANCE_URL` | —                                   | peers (§10 timeouts)                                                                                                                                                |
+| `NP_SANDBOX_BASE_URL`                                                     | unset                               | test mode Verifier (`/sim/intents/*`); unset refuses test payloads                                                                                                  |
+| `NP_NEAR_RPC_URLS`                                                        | empty                               | live Verifier: simulate, `send_tx`, status (tried in order); empty refuses live payloads                                                                            |
+| `NP_INTENTS_CONTRACT`                                                     | `intents.near`                      | Verifier contract                                                                                                                                                   |
+| `NP_TREASURY_ACCOUNT`                                                     | unset                               | live fee recipient; unset refuses live requirements                                                                                                                 |
+| `NP_TEST_TREASURY_ACCOUNT`                                                | `treasury.nearpay.near`             | test fee recipient (sandbox only)                                                                                                                                   |
+| `NP_RELAYER_ACCOUNT`                                                      | unset                               | relayer account (advertised in `/x402/supported`)                                                                                                                   |
+| `NP_RELAYER_KEY_FILES`                                                    | unset                               | batcher: function-call key files, `*` in the file name (e.g. `/run/secrets/relayer_key_*`)                                                                          |
+| `NP_GAS_PER_PAYLOAD_TGAS`                                                 | 15                                  | batch size `floor(240 / n)`, gas `k × n + 20` Tgas                                                                                                                  |
+| `NP_SETTLE_WAIT_MS`                                                       | 8000                                | settle waits this long for finality                                                                                                                                 |
+| `NP_REQUIREMENT_TTL_MAX_S`                                                | 300                                 | ceiling for `max_timeout_s`                                                                                                                                         |
+| `NP_REQUIREMENT_RATE_PER_S`                                               | 200                                 | requirement issuance per merchant per second                                                                                                                        |
+| `NP_PAYER_RATE_PER_S`                                                     | 10                                  | verifications per payer per second (account quota: `quotas.rps`, default 50)                                                                                        |
+| `NP_SERVICE_CLIENT_SECRET_FILE`                                           | —                                   | client credentials for service tokens                                                                                                                               |
+| `NP_PII_KEK_FILE`                                                         | —                                   | 32-byte KEK for the idempotency store                                                                                                                               |
+| `NP_VALKEY_URL`                                                           | unset                               | settle waiters (`ap:<id>`) and quotas across replicas; in-process without it                                                                                        |
+| `NP_NATS_URL`                                                             | —                                   | batcher: events (kill switch in, agent payments out)                                                                                                                |
+| `NP_BATCH_TICK_MS`                                                        | 150                                 | batcher tick                                                                                                                                                        |
+| `NP_X402_OPERATION_KEY_FILES`                                             | unset                               | near-intents operation-token keys, `*` = kid (e.g. `/run/secrets/x402_op_key_*`, ≥ 32 random bytes each, raw or hex; newest file signs); unset refuses near-intents |
+| `NP_X402_SLIPPAGE_BPS`                                                    | `{"min":10,"max":300,"default":50}` | accepted `slippageTolerance` range advertised per entry                                                                                                             |
+| `NP_X402_QUOTE_RATE_PER_S`                                                | `{"account":5,"refund_to":1}`       | quote payloads per second per account and per `refundTo`                                                                                                            |
+| `NP_X402_ORIGINS_MAX`                                                     | 20                                  | origins per near-intents issuance                                                                                                                                   |
 
 ## Behaviour (Stage 1)
 
@@ -124,6 +128,38 @@ keys; tests never reach mainnet.
 - **Live send** uses kit `sendSignedTx` (CR-15-16) on the bytes whose hash was stored first; a send is "rejected"
   only when every RPC provider refused it as invalid, otherwise its status is polled.
 
+## Behaviour (Stage 3)
+
+- **Cross-chain x402** (`exact` + `near-intents`, x402 PR #3370 shapes, spec 0.3.0) on its own routes
+  `POST /x402/near-intents/{requirements,verify,settle}`; `/x402/supported` and the intents-transfer routes are unchanged
+  (they refuse near-intents bindings).
+- **Requirements**: the intents-transfer entry first (unless `include_intents_transfer: false`), then one unquoted entry
+  per origin (`amount`/`payTo` empty, origin network/asset from rails' registry, `maxTimeoutSeconds` from the origin
+  chain profile, indicative amount from rails options) with its own single-use binding (`issued_requirements`,
+  `method = near-intents`, the entry stored as issued) expiring after `quote_window_s`. Live issuance stops under the
+  kill switch. A refused request issues nothing.
+- **Quote** (`verify` with a `quote` payload): the echoed entry must be the issued one (JCS; `indicativeAmount` is not
+  compared; quoted-only fields refused) for the forwarded resource; `refundTo` must be an address of the origin network;
+  quotas per account and `refundTo`. The binding is claimed (one quote per entry), then rails creates the route
+  execution (`owner: agentpay`, `x402_binding`, idempotency key `x402:<binding>`, fee borne by the payer, slippage
+  clamped). Rails' refusals map to `invalid_exact_near_intents_quote_unavailable` (binding released for
+  `route_unavailable`/`pricing_unavailable`), `payer_blocked`, or 503 (`rail_unavailable`/`screening_unavailable`
+  release it; a timeout or unexpected answer keeps it consumed). The returned execution must be exactly the requested
+  quote (fail closed otherwise). The answer carries the quote and the operation token
+  `<kid>.<refund deadline + 24 h>.<HMAC-SHA256 over JCS>`; only the token's sha256 is stored.
+- **Deposit**: `verify` checks a `deposit` payload (token expiry before any lookup, terms, MAC over the recomputed
+  input, the operation of the deposit instrument); `settle` forwards the tx to rails (best effort), then waits up to
+  `NP_SETTLE_WAIT_MS` for the result the consumer records (Valkey `xo:<operation>`). Success only from rails' evidence
+  and only for a tx of the operation (`invalid_exact_near_intents_deposit_not_found` otherwise); refunds and failures
+  answer `exact_near_intents_insufficient_deposit` / `exact_near_intents_payment_failed`; the first final response
+  claims the result, later ones are `replayed`; `settlement_pending` never claims. Settle is not blocked by the kill
+  switch (it only reports what already happened).
+- **Merchant record**: `evt.rails.execution.settled` of an agentpay execution creates the agent payment directly in
+  `settled` (`transfer_method: near-intents`, `payer` = `evidence.sender`, `fee_amount` 0, `origin` with the deposit
+  and observed fee) with its transition and `evt.agentpay.agent_payment.settled` in one transaction — whether or not the
+  agent comes back. `refunded`/`failed` create none. Other owners' executions are acked; duplicate and stale events
+  never change a result; a rails defect (no binding, evidence or sender; mismatching execution) is nak'ed with an alert.
+
 ## Ops CLI (Stage 1)
 
 `docker compose -p nearpay exec agentpay-api /nodejs/bin/node dist/ops.js <command>`: `payment <ap_…>`, `queue`,
@@ -135,7 +171,9 @@ Stage 1 implemented (step 1.2): x402 `exact` + `intents-transfer` facilitator, a
 `/internal/relay`, the batcher with the relayer key pool, the kill-switch consumer and both produced subjects.
 Stage 2 implemented (step 2.2): Intents-account refund relay, kill switch on live refund relays, payer sessions via
 payments' internal route, kit `sendSignedTx`; refund legs are listed by `GET /v1/agent_payments?kind=refund`
-(dashboard). Stage 3 (`near-intents`, MPP) is not started.
+(dashboard). Stage 3 implemented (step 3.2): `exact` + `near-intents` (requirements, quotes, deposits, settles,
+the rails execution consumer and near-intents agent payments) on kit 0.3.0 (`@nearpay-internal/intents` binding and
+operation-token helpers); the MPP adapter evaluation is not started.
 
 ## Built with
 

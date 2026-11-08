@@ -97,6 +97,15 @@ export function paymentRequirements(t: IssuedTerms): PaymentRequirements {
   };
 }
 
+/** The `resource` echoed in PAYMENT-REQUIRED (only the fields that were given). */
+export function resourceJson(r: ResourceJson): ResourceJson {
+  return {
+    url: r.url,
+    ...(r.description !== undefined ? { description: r.description } : {}),
+    ...(r.mimeType !== undefined ? { mimeType: r.mimeType } : {}),
+  };
+}
+
 export async function issueRequirements(
   ap: Agentpay,
   m: Merchant,
@@ -109,6 +118,21 @@ export async function issueRequirements(
   const ctx = await settlementContext(ap, m);
   if (m.livemode && !ctx.account.live_enabled)
     throw new ApiError("account_not_live", { params: { missing: "live mode" } });
+  const resource = resourceJson(body.resource);
+  const accepts = await issueIntentsTransfer(ap, m, ctx, { ...body, resource });
+  return { x402Version: X402_VERSION, resource: { ...resource }, accepts: [accepts] };
+}
+
+/**
+ * Issues one `intents-transfer` entry (§3): destination, fee, binding, and its `issued_requirements` row. The
+ * caller has checked the rate limit, the TTL bound and that the account may use the mode.
+ */
+export async function issueIntentsTransfer(
+  ap: Agentpay,
+  m: Merchant,
+  ctx: SettlementContext,
+  body: RequirementsInput,
+): Promise<PaymentRequirements> {
   const feeTo = m.livemode ? ap.settings.treasury : ap.settings.testTreasury;
   if (!feeTo) throw railUnavailable("live treasury not configured");
 
@@ -141,11 +165,6 @@ export async function issueRequirements(
     nonce16,
     expires_at: expiresAt,
   });
-  const resource: ResourceJson = {
-    url: body.resource.url,
-    ...(body.resource.description !== undefined ? { description: body.resource.description } : {}),
-    ...(body.resource.mimeType !== undefined ? { mimeType: body.resource.mimeType } : {}),
-  };
   await ap.db
     .insertInto("issued_requirements")
     .values({
@@ -153,7 +172,7 @@ export async function issueRequirements(
       account_id: m.account,
       livemode: m.livemode,
       resource_url: body.resource.url,
-      resource: JSON.stringify(resource),
+      resource: JSON.stringify(resourceJson(body.resource)),
       pay_to: payTo,
       asset_id: assetId,
       amount: amount.toString(),
@@ -164,7 +183,7 @@ export async function issueRequirements(
       expires_at: new Date(expiresAt * 1000),
     })
     .execute();
-  const accepts = paymentRequirements({
+  return paymentRequirements({
     amount: amount.toString(),
     assetId,
     payTo,
@@ -174,5 +193,4 @@ export async function issueRequirements(
     binding,
     expiresAt,
   });
-  return { x402Version: X402_VERSION, resource: { ...resource }, accepts: [accepts] };
 }

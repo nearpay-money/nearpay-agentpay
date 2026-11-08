@@ -3,12 +3,13 @@
  *
  * | kind                 | when   | what                                                               |
  * |----------------------|--------|--------------------------------------------------------------------|
- * | requirements.purge   | hourly | unconsumed x402 requirements expired > 24 h; checkout requirements > 7 days |
+ * | requirements.purge   | hourly | unconsumed x402 requirements expired > 24 h; checkout requirements > 7 days; near-intents operations 30 days after their token expired |
  * | relayer.allowance    | 5 min  | allowance of each relayer key (gauge + alert below 20%, RB-09)     |
  * | kit.purge            | hourly | published outbox, old inbox, expired idempotency keys              |
  */
 import { type JobHandler, purgeKitTables, type RecurringJob } from "@nearpay-internal/db";
 import type { Agentpay } from "../app/context.js";
+import { OPERATION_PURGE_AFTER_MS } from "../app/near-intents.js";
 import type { Batcher } from "../relayer/batcher/batcher.js";
 
 const HOUR = 3_600_000;
@@ -33,8 +34,17 @@ export function jobHandlers(ap: Agentpay, b: Batcher): Record<string, JobHandler
         .deleteFrom("checkout_requirements")
         .where("updated_at", "<", new Date(ap.now() - 7 * 24 * HOUR))
         .executeTakeFirst();
+      // §4.1: a token is rejected before any lookup once expired, so the row is only kept for support
+      const operations = await ap.db
+        .deleteFrom("x402_operations")
+        .where("token_expiry", "<", new Date(ap.now() - OPERATION_PURGE_AFTER_MS))
+        .executeTakeFirst();
       ap.log.info(
-        { x402: Number(x402.numDeletedRows), checkout: Number(checkout.numDeletedRows) },
+        {
+          x402: Number(x402.numDeletedRows),
+          checkout: Number(checkout.numDeletedRows),
+          operations: Number(operations.numDeletedRows),
+        },
         "expired requirements purged",
       );
     },

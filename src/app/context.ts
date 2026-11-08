@@ -3,6 +3,7 @@ import type { Kysely, Transaction } from "@nearpay-internal/db";
 import type { Logger, ServiceMetrics } from "@nearpay-internal/service";
 import type { SettlementContext } from "@nearpay-internal/spec";
 import type {
+  ChainProfile,
   Compliance,
   Identity,
   InternalAsset,
@@ -15,6 +16,7 @@ import type {
 import type { DB } from "../infra/db/schema.js";
 import type { Limiter } from "../infra/limiter.js";
 import type { NearChain } from "../infra/near/rpc.js";
+import type { OperationKeys } from "../infra/operation-keys.js";
 import type { Waiters } from "../infra/waiters.js";
 import { type TtlCache, ttlCache } from "./cache.js";
 
@@ -69,6 +71,12 @@ export interface AgentpaySettings {
   readonly requirementTtlMaxS: number;
   readonly requirementRatePerS: number;
   readonly payerRatePerS: number;
+  // ---- Stage 3: near-intents (§3.1)
+  /** Operation-token keys; null refuses near-intents issuance and quotes. */
+  readonly operationKeys: OperationKeys | null;
+  readonly slippage: { readonly min: number; readonly max: number; readonly default: number };
+  readonly quoteRatePerS: { readonly account: number; readonly refund_to: number };
+  readonly originsMax: number;
 }
 
 export interface VerifiedPayload {
@@ -84,6 +92,8 @@ export interface Caches {
   readonly verified: TtlCache<VerifiedPayload>;
   readonly quotas: TtlCache<number>;
   readonly killSwitch: TtlCache<KillSwitchKnowledge>;
+  /** Rails chain profiles (near-intents deposit windows), 5 min. */
+  readonly chainProfiles: TtlCache<readonly ChainProfile[]>;
 }
 
 /** Engaged, released, or unknown (no state ever stored: live settles and relays fail closed, spec 0.2.1). */
@@ -97,6 +107,7 @@ export function newCaches(now: () => number = Date.now): Caches {
     verified: ttlCache(60_000, now),
     quotas: ttlCache(60_000, now),
     killSwitch: ttlCache(1_000, now),
+    chainProfiles: ttlCache(5 * 60_000, now),
   };
 }
 

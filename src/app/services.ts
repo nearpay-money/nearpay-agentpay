@@ -57,6 +57,7 @@ import { MIGRATIONS_DIR } from "../infra/db/migrations.js";
 import type { DB } from "../infra/db/schema.js";
 import { type Limiter, limiter } from "../infra/limiter.js";
 import { type NearChain, nearChain } from "../infra/near/rpc.js";
+import { loadOperationKeys, type OperationKeys } from "../infra/operation-keys.js";
 import { type Waiters, waiters } from "../infra/waiters.js";
 import { type Batcher, batcher } from "../relayer/batcher/batcher.js";
 import { loadKeyFiles, type RelayerKey, registerKeys } from "../relayer/key-pool/keys.js";
@@ -78,6 +79,8 @@ export interface ServiceDeps {
   waiters?: Waiters;
   limiter?: Limiter;
   cipher?: EnvelopeCipher;
+  /** Operation-token keys (default: loaded from `NP_X402_OPERATION_KEY_FILES`). */
+  operationKeys?: OperationKeys | null;
   fetch?: typeof fetch;
   now?: () => number;
 }
@@ -142,6 +145,11 @@ function build(config: SharedConfig, deps: ServiceDeps, app: string): Built {
       requirementTtlMaxS: config.requirementTtlMaxS,
       requirementRatePerS: config.requirementRatePerS,
       payerRatePerS: config.payerRatePerS,
+      operationKeys:
+        deps.operationKeys !== undefined ? deps.operationKeys : loadOperationKeys(config.x402OperationKeyFiles),
+      slippage: config.x402SlippageBps,
+      quoteRatePerS: config.x402QuoteRatePerS,
+      originsMax: config.x402OriginsMax,
     },
     caches: newCaches(now),
     now,
@@ -237,7 +245,7 @@ export async function createBatcher(
   service.addReadiness("bus", () => {
     if (!busReady(bus)) throw new Error("NATS connection is closed");
   });
-  const handlers = agentpayHandlers(db.db);
+  const handlers = agentpayHandlers(db.db, { waiters: ap.waiters, log: service.log });
   const durables = durablesOf("agentpay", Object.keys(handlers) as Subject[]);
   service.metrics.collectConsumerLag(async () =>
     Object.fromEntries(

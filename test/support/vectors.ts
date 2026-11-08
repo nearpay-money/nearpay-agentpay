@@ -29,3 +29,19 @@ export const VECTOR_REQUIREMENT = {
 
 /** A moment before the vectors' deadline (2026-11-05T10:02:00Z). */
 export const VECTOR_NOW = Date.parse("2026-11-05T10:00:00.000Z");
+
+/** spec 0.3.0 `test-vectors/x402-near-intents.json` (binding, operation token, every header of the flow). */
+export interface NearIntentsVectors {
+  binding: { input: Record<string, unknown>; jcs: string; binding: string };
+  operation_token: {
+    key_hex: string;
+    kid: string;
+    input: Record<string, unknown> & { expiry: number };
+    jcs: string;
+    mac: string;
+    token: string;
+  };
+  headers: Record<string, Record<string, unknown>>;
+}
+
+export const NEAR_INTENTS_VECTORS = require("@nearpay/spec/test-vectors/x402-near-intents.json") as NearIntentsVectors;

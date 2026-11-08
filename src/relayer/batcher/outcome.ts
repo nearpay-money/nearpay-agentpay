@@ -10,7 +10,7 @@ export interface ExecutedWithHash {
 }
 
 export function matchExecutedWithHashes(rows: readonly AgentPaymentRow[], executed: readonly ExecutedWithHash[]) {
-  const relayed = rows.map((row) => ({ id: row.id, payer: row.payer, nonce: row.nonces[0] ?? "", row }));
+  const relayed = rows.map((row) => ({ id: row.id, payer: row.payer, nonce: row.nonces?.[0] ?? "", row }));
   const { settled, missing } = matchExecuted(relayed, executed);
   const hashOf = (p: string, n: string) =>
     executed.find((e) => e.account_id === p && e.nonce === n)?.intent_hash ?? null;

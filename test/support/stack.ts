@@ -14,6 +14,7 @@ import { nearPublicKey } from "@nearpay-internal/intents";
 import type { Service } from "@nearpay-internal/service";
 import {
   createAgentAttempt,
+  createExecution,
   createScreening,
   type Execution,
   getExecution,
@@ -23,8 +24,11 @@ import {
   getPayerCheckoutSession,
   getSettlementContext,
   INTERNAL_ROUTES,
+  listChainProfiles,
+  listInternalOptions,
   sandboxExecuteIntents,
   sandboxSimulateIntents,
+  submitExecutionDepositTx,
 } from "@nearpay-internal/spec";
 import {
   account,
@@ -55,15 +59,35 @@ import { MIGRATIONS_DIR } from "../../src/infra/db/migrations.js";
 import type { DB } from "../../src/infra/db/schema.js";
 import type { Batcher } from "../../src/relayer/batcher/batcher.js";
 import type { RelayerKey } from "../../src/relayer/key-pool/keys.js";
+import { BASE_USDC, quoteExecution } from "./executions.js";
 import { type FakeRpc, startFakeRpc } from "./near-rpc.js";
 import { leg as buildLeg, type Leg, type LegOptions, type Signer } from "./refund.js";
 import { type RealSandbox, startSandbox } from "./sandbox.js";
+import { NEAR_INTENTS_VECTORS } from "./vectors.js";
 import { FakeVerifier, Rejection } from "./verifier.js";
 
-export { USDC_NEAR };
+export { BASE_USDC, USDC_NEAR };
+/** Base USDC contract (the origin entry's `asset`). */
+export const BASE_USDC_CONTRACT = "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913";
+/** The spec vector's TEST-ONLY operation-token key (kid `k1`). */
+export const OPERATION_KEY = new Uint8Array(Buffer.from(NEAR_INTENTS_VECTORS.operation_token.key_hex, "hex"));
+
+/** How the rails mock answers `createExecution` (near-intents quotes). */
+export interface QuoteControl {
+  /** Answer with this rails error code instead of quoting (`internal` → a plain 500). */
+  fail: string | null;
+  /** Rewrites the execution rails returns (integrity tests). */
+  mutate: ((x: Execution) => Execution) | null;
+  /** Bodies rails received. */
+  readonly calls: Record<string, unknown>[];
+  /** Deposit memo for the next quotes (origins that need one). */
+  memo: string | null;
+}
 export const TEST_TREASURY = "treasury.nearpay.near";
 export const LIVE_TREASURY = "treasury.nearpay-live.near";
 export const RELAYER = "relayer.nearpay.near";
+/** A native origin coin without a contract (the entry's `asset` is its Intents id). */
+export const SOL_ASSET = "nep141:sol.omft.near";
 
 export interface Merchant {
   readonly account: `acct_${string}`;
@@ -120,6 +144,8 @@ export interface Stack {
   /** The real sandbox, when started with `realSandbox`. */
   readonly realSandbox: RealSandbox | null;
   readonly executions: Map<string, Execution>;
+  /** near-intents quotes (rails `createExecution`). */
+  readonly quotes: QuoteControl;
   readonly sessions: Map<string, Session>;
   readonly refunds: Map<string, Record<string, unknown>>;
   /** payments serves `getPayerCheckoutSession` (CR-15-15); false answers like a payments without the route. */
@@ -217,6 +243,34 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
   const executions = new Map<string, Execution>();
   const rails = await mockPeer({ service: "rails", routes: INTERNAL_ROUTES });
   rails.on(getInternalAsset, async (ctx) => {
+    if (ctx.params.asset_id === BASE_USDC)
+      return {
+        asset_id: BASE_USDC,
+        chain: "eip155:8453",
+        blockchain: "base",
+        symbol: "USDC",
+        decimals: 6,
+        family: "USDC",
+        is_usd_stable: true,
+        price_usd: "1",
+        price_ok: true,
+        as_of: new Date().toISOString(),
+        token: { standard: "erc20", address: BASE_USDC_CONTRACT },
+      } as never;
+    if (ctx.params.asset_id === SOL_ASSET)
+      return {
+        asset_id: SOL_ASSET,
+        chain: "solana:5eykt4UsFv8P8NJdTREpY1vzqKqZKvdp",
+        blockchain: "sol",
+        symbol: "SOL",
+        decimals: 9,
+        family: "SOL",
+        is_usd_stable: false,
+        price_usd: "150",
+        price_ok: true,
+        as_of: new Date().toISOString(),
+        token: { standard: "native", address: null },
+      } as never;
     if (ctx.params.asset_id !== USDC_NEAR)
       mockError("asset_unsupported", { params: { asset_id: ctx.params.asset_id } });
     return {
@@ -231,6 +285,106 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
       price_ok: true,
       as_of: new Date().toISOString(),
     };
+  });
+  rails.on(
+    listChainProfiles,
+    async () =>
+      ({
+        profiles: [
+          {
+            chain: "eip155:8453",
+            blockchain: "base",
+            family: "evm",
+            tier: "A",
+            min_deadline_s: 120,
+            default_deadline_s: 1800,
+            finality: "12 blocks",
+            verification_timeout_s: 600,
+            memo_mode: "none",
+            explorer_tx_url: "https://basescan.org/tx/{tx}",
+          },
+          {
+            chain: "near:mainnet",
+            blockchain: "near",
+            family: "near",
+            tier: "A",
+            min_deadline_s: 60,
+            default_deadline_s: 600,
+            finality: "final",
+            verification_timeout_s: 300,
+            memo_mode: "none",
+            explorer_tx_url: "https://nearblocks.io/txns/{tx}",
+          },
+        ],
+      }) as never,
+  );
+  rails.on(
+    listInternalOptions,
+    async (ctx) =>
+      ({
+        options: [
+          {
+            method: "route_quote",
+            origin_asset_id: BASE_USDC,
+            chain: "eip155:8453",
+            symbol: "USDC",
+            decimals: 6,
+            estimated_amount_in: ((BigInt(ctx.query.amount_out) * 1012n) / 1000n).toString(),
+            route_class: "stable_pair",
+            applied_fee_bps: 50,
+            min_deadline_s: 120,
+            available: true,
+            reason: null,
+          },
+        ],
+      }) as never,
+  );
+  const quotes: QuoteControl = { fail: null, mutate: null, calls: [], memo: null };
+  rails.on(createExecution, async (ctx) => {
+    const b = ctx.body as unknown as Record<string, never> & {
+      idempotency_key: string;
+      x402_binding: string;
+      account_id: `acct_${string}`;
+      livemode: boolean;
+      origin: { asset_id: string; chain: string; refund_to: string };
+      destination: { address: string };
+      pricing: { amount: string };
+      deadline_cap: string;
+    };
+    quotes.calls.push(structuredClone(b));
+    if (quotes.fail === "internal") throw new Error("rails exploded");
+    if (quotes.fail)
+      mockError(quotes.fail as never, { params: { chain: b.origin.chain, asset_id: b.origin.asset_id } as never });
+    const existing = [...executions.values()].find(
+      (x) => (x as { x402_binding?: string }).x402_binding === b.x402_binding,
+    );
+    if (existing) return existing;
+    const deadline = new Date(Math.floor(Math.min(Date.parse(b.deadline_cap), Date.now() + 1_800_000) / 1000) * 1000);
+    let x = quoteExecution({
+      account: b.account_id,
+      livemode: b.livemode,
+      binding: b.x402_binding,
+      payTo: b.destination.address,
+      amount: b.pricing.amount,
+      refundTo: b.origin.refund_to,
+      network: b.origin.chain,
+      originAsset: b.origin.asset_id,
+      depositAddress: `0x${randomBytes(20).toString("hex")}`,
+      depositMemo: quotes.memo,
+      deadline: deadline.toISOString(),
+    });
+    if (quotes.mutate) x = quotes.mutate(x);
+    executions.set(x.id, x);
+    return x;
+  });
+  rails.on(submitExecutionDepositTx, async (ctx) => {
+    const x = executions.get(ctx.params.id);
+    if (!x) mockError("resource_missing", { params: { object: "execution", id: ctx.params.id } });
+    const ex = x as Execution;
+    if (["succeeded", "refunded", "failed"].includes(ex.state)) mockError("state_conflict");
+    if (!ex.deposit_tx_hashes.includes(ctx.body.tx_hash))
+      executions.set(ex.id, { ...ex, deposit_tx_hashes: [...ex.deposit_tx_hashes, ctx.body.tx_hash] });
+    return undefined as never;
   });
   rails.on(getExecution, async (ctx) => {
     const x = executions.get(ctx.params.id);
@@ -448,12 +602,20 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
     requirementTtlMaxS: 300,
     requirementRatePerS: 200,
     payerRatePerS: 10,
+    x402SlippageBps: { min: 10, max: 300, default: 50 },
+    x402QuoteRatePerS: { account: 50, refund_to: 20 },
+    x402OriginsMax: 20,
     piiKek: randomBytes(32).toString("base64"),
     natsUrl: nats.url,
     batchTickMs: 50,
     ...(o.config as object),
   } as BatcherConfig;
-  const deps: ServiceDeps = { keys: testKeySource(), serviceToken: testServiceToken("agentpay"), ...o.deps };
+  const deps: ServiceDeps = {
+    keys: testKeySource(),
+    serviceToken: testServiceToken("agentpay"),
+    operationKeys: { signing: { kid: "k1", key: OPERATION_KEY }, all: new Map([["k1", OPERATION_KEY]]) },
+    ...o.deps,
+  };
   const { service: api, ap } = createApi(config, {
     ...deps,
     database: createDb<DB>({ url: appUrl, applicationName: "agentpay-api-test" }),
@@ -498,6 +660,7 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
     relayerKeys: keys,
     realSandbox: real,
     executions,
+    quotes,
     sessions,
     refunds,
     get payerRoute() {

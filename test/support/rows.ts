@@ -37,5 +37,7 @@ export const agentPaymentRow = (o: Partial<AgentPaymentRow> = {}): AgentPaymentR
   settled_at: now,
   result_reported_at: null,
   version: 3,
+  transfer_method: "intents-transfer",
+  origin: null,
   ...o,
 });
