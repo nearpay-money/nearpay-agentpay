@@ -1,7 +1,7 @@
 /**
- * The kit 0.3.0 adapter (src/domain/near-intents/kit.ts) against the spec 0.3.0 vectors: near-intents binding,
- * operation token mint/verify (expiry first, unknown key, any change of the covered input), and JCS limits.
- * Keep this test when the adapter switches to `@nearpay-internal/intents` 0.3.0.
+ * The kit 0.3.0 helpers agentpay uses (`@nearpay-internal/intents`, via src/domain/near-intents/kit.ts) against the
+ * spec 0.3.0 vectors: near-intents binding, operation token mint/verify (expiry first, unknown key, any change of the
+ * covered input), and JCS limits.
  */
 import { quotedRequirements } from "@nearpay/spec";
 import { describe, expect, it } from "vitest";

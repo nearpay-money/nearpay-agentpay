@@ -172,8 +172,8 @@ Stage 1 implemented (step 1.2): x402 `exact` + `intents-transfer` facilitator, a
 Stage 2 implemented (step 2.2): Intents-account refund relay, kill switch on live refund relays, payer sessions via
 payments' internal route, kit `sendSignedTx`; refund legs are listed by `GET /v1/agent_payments?kind=refund`
 (dashboard). Stage 3 implemented (step 3.2): `exact` + `near-intents` (requirements, quotes, deposits, settles,
-the rails execution consumer and near-intents agent payments); the MPP adapter evaluation is not started. The kit
-0.3.0 x402 helpers are vendored in `src/domain/near-intents/kit.ts` until kit 0.3.0 is published.
+the rails execution consumer and near-intents agent payments) on kit 0.3.0 (`@nearpay-internal/intents` binding and
+operation-token helpers); the MPP adapter evaluation is not started.
 
 ## Built with
 
