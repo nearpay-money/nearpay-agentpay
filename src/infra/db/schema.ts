@@ -1,4 +1,4 @@
-/** Kysely table types (migrations/0001_agentpay.sql, 0002_settle_reported.sql, 0003_refund_relay.sql). numeric(78,0) columns read as decimal strings. */
+/** Kysely table types (migrations/0001_agentpay.sql … 0004_near_intents.sql). numeric(78,0) columns read as decimal strings. */
 import type { ColumnType, KitTables } from "@nearpay-internal/db";
 import type { AgentPaymentKind, AgentPaymentStatus } from "../../domain/facilitator-payment/status.js";
 
@@ -41,7 +41,8 @@ export interface IssuedRequirementsTable {
   pay_to: string;
   asset_id: string;
   amount: Num;
-  fee_to: string;
+  /** Null for near-intents rows (the fee is inside the 1Click quote; 0004). */
+  fee_to: Opt<string>;
   fee_amount: Num;
   max_timeout_s: number;
   nonce16: string;
@@ -49,6 +50,55 @@ export interface IssuedRequirementsTable {
   consumed_at: OptTimestamp;
   consumed_by: Opt<string>;
   created_at: Timestamp;
+  /** 0004: `intents-transfer` (Stage 1) or `near-intents` (Stage 3, §3.1). */
+  method: Def<RequirementMethod>;
+  origin_network: Opt<string>;
+  origin_asset_id: Opt<string>;
+  origin_asset: Opt<string>;
+  /** The unquoted near-intents `accepts[]` entry exactly as issued. */
+  entry: ColumnType<unknown | null, string | null | undefined, string | null>;
+}
+
+export type RequirementMethod = "intents-transfer" | "near-intents";
+export type TransferMethod = RequirementMethod;
+
+/** `AgentPaymentOrigin` (spec 0.3.0) as stored on near-intents agent payments. */
+export interface AgentPaymentOriginJson {
+  network: string;
+  asset_id: string;
+  amount_in: string | null;
+  refund_to: string;
+  deposit_address: string;
+  deposit_memo: string | null;
+  tx_hashes: string[];
+  fee: { amount: string; asset_id: string } | null;
+}
+
+export type OperationStatus = "quoted" | "settled" | "failed";
+
+/** One minted near-intents quote (0004, §4.1). */
+export interface X402OperationsTable {
+  id: string;
+  account_id: string;
+  livemode: boolean;
+  binding: string;
+  execution_id: string;
+  network: string;
+  deposit_address: string;
+  deposit_memo: string | null;
+  refund_to: string;
+  amount_in: Num;
+  refund_deadline: Timestamp;
+  token_sha256: Buffer;
+  token_kid: string;
+  token_expiry: Timestamp;
+  status: OperationStatus;
+  result: ColumnType<unknown | null, string | null | undefined, string | null>;
+  result_reported_at: OptTimestamp;
+  execution_version: Opt<number>;
+  agent_payment_id: Opt<string>;
+  created_at: Timestamp;
+  updated_at: Timestamp;
 }
 
 export interface CheckoutRequirementsTable {
@@ -75,12 +125,13 @@ export interface AgentPaymentsTable {
   pay_to: string;
   /** Null for refund legs (no NearPay fee; 0003). */
   fee_to: Opt<string>;
-  payload_hash: Buffer;
-  payload: Json<unknown>;
-  standard: string;
+  /** Null for near-intents rows (no signed payload; 0004). */
+  payload_hash: Buffer | null;
+  payload: ColumnType<unknown | null, string | null | undefined, string | null>;
+  standard: string | null;
   intent_hashes: Opt<string[]>;
-  nonces: string[];
-  deadline: Timestamp;
+  nonces: string[] | null;
+  deadline: OptTimestamp;
   status: AgentPaymentStatus;
   amount: Num;
   asset_id: string;
@@ -101,6 +152,10 @@ export interface AgentPaymentsTable {
   /** First /x402/settle response that carried the final outcome (0002; later ones are `replayed`). */
   result_reported_at: OptTimestamp;
   version: Def<number>;
+  /** 0004: how the payment reached the merchant. */
+  transfer_method: Def<TransferMethod>;
+  /** 0004: `AgentPaymentOrigin` of a near-intents payment, else null. */
+  origin: ColumnType<AgentPaymentOriginJson | null, string | null | undefined, string | null>;
 }
 
 export interface AgentPaymentTransitionsTable {
@@ -170,4 +225,5 @@ export interface DB extends KitTables {
   relayer_keys: RelayerKeysTable;
   quotas: QuotasTable;
   kill_switch: KillSwitchTable;
+  x402_operations: X402OperationsTable;
 }

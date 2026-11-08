@@ -90,7 +90,7 @@ export function batcher(ap: Agentpay, o: BatcherOptions) {
         .execute();
       const usable: AgentPaymentRow[] = [];
       for (const r of rows) {
-        if (tooLate(r.deadline, ap.now())) {
+        if (r.deadline === null || tooLate(r.deadline, ap.now())) {
           await updatePayment(
             tx,
             r,

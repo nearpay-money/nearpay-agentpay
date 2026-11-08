@@ -8,6 +8,9 @@ import {
   agentPayRequirements,
   getAgentPayment,
   listAgentPayments,
+  x402NearIntentsRequirements,
+  x402NearIntentsSettle,
+  x402NearIntentsVerify,
   x402Requirements,
   x402Settle,
   x402Supported,
@@ -19,6 +22,7 @@ import * as payments from "../app/agent-payments.js";
 import * as checkout from "../app/checkout.js";
 import type { Agentpay } from "../app/context.js";
 import { type Merchant, merchantOf } from "../app/merchant.js";
+import { issueNearIntents, settleNearIntents, verifyNearIntents } from "../app/near-intents.js";
 import * as refunds from "../app/refunds.js";
 import { issueRequirements } from "../app/requirements.js";
 import { settle, supported, verify } from "../app/x402.js";
@@ -39,6 +43,14 @@ export function agentpayRoutes(ap: Agentpay): RouteBinding[] {
     implement(x402Requirements, async (ctx) => issueRequirements(ap, merchant(ctx), ctx.body) as never),
     implement(x402Verify, async (ctx) => verify(ap, merchant(ctx), ctx.body) as never),
     implement(x402Settle, async (ctx) => settle(ap, merchant(ctx), ctx.body, ctx.deadline) as never),
+
+    // ---- x402 exact + near-intents (Stage 3, §3.1): own routes, PR #3370 wire shapes
+    implement(x402NearIntentsRequirements, async (ctx) => issueNearIntents(ap, merchant(ctx), ctx.body) as never),
+    implement(x402NearIntentsVerify, async (ctx) => verifyNearIntents(ap, merchant(ctx), ctx.body) as never),
+    implement(
+      x402NearIntentsSettle,
+      async (ctx) => settleNearIntents(ap, merchant(ctx), ctx.body, ctx.deadline) as never,
+    ),
 
     // ---- agent payments
     implement(listAgentPayments, async (ctx) => payments.listAgentPayments(ap, merchant(ctx), ctx.query) as never),

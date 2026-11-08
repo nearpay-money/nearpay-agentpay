@@ -8,6 +8,17 @@ import { z } from "zod";
 const http = () => url(["http:", "https:"]);
 const bounded = (min: number, max: number, fallback: number) =>
   z.coerce.number().int().min(min).max(max).default(fallback);
+/** A JSON object from the environment (the raw string fails the object schema when it does not parse). */
+const json = <T extends z.ZodType>(schema: T) =>
+  z.preprocess((v) => {
+    if (typeof v !== "string") return v;
+    try {
+      return JSON.parse(v);
+    } catch {
+      return v;
+    }
+  }, schema);
+const bps = () => z.int().min(0).max(10_000);
 const nearAccount = () =>
   z.string().regex(/^(?=.{2,64}$)(([a-z\d]+[-_])*[a-z\d]+\.)*([a-z\d]+[-_])*[a-z\d]+$/, "must be a NEAR account id");
 
@@ -43,6 +54,24 @@ const shared = {
   payerRatePerS: bounded(1, 10_000, 10),
   /** 32-byte KEK (base64 or hex) for the idempotency store's response encryption. */
   piiKek: secret(),
+  // ---- Stage 3: x402 `exact` + `near-intents` (§3.1)
+  /**
+   * Operation-token keys, a path with `*` in the file name (`/run/secrets/x402_op_key_*`, kid = the `*` part, ≥ 32
+   * random bytes each, the newest file signs). Unset: near-intents issuance and quotes are refused.
+   */
+  x402OperationKeyFiles: z.string().min(1).optional(),
+  /** Accepted `slippageTolerance` range, bps (advertised per entry; quote payloads are clamped into it). */
+  x402SlippageBps: json(
+    z
+      .object({ min: bps(), max: bps(), default: bps() })
+      .refine((r) => r.min <= r.default && r.default <= r.max, "need min ≤ default ≤ max"),
+  ).default({ min: 10, max: 300, default: 50 }),
+  /** Quote payloads per second: per account and per `refundTo`. */
+  x402QuoteRatePerS: json(
+    z.object({ account: z.int().min(1).max(10_000), refund_to: z.int().min(1).max(10_000) }),
+  ).default({ account: 5, refund_to: 1 }),
+  /** Origins per near-intents issuance (the spec allows at most 20). */
+  x402OriginsMax: bounded(1, 20, 20),
 };
 
 export const apiShape = { ...shared };

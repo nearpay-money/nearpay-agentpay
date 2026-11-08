@@ -87,8 +87,14 @@ export function sameTerms(r: RequirementRow, pr: PaymentRequirements): boolean {
 
 type RequirementRow = NonNullable<Awaited<ReturnType<typeof loadRequirement>>>;
 
+/** An issued `intents-transfer` requirement (a near-intents binding is unknown here: it has its own routes, §3.1). */
 async function loadRequirement(ap: Agentpay, binding: string) {
-  return ap.db.selectFrom("issued_requirements").selectAll().where("binding", "=", binding).executeTakeFirst();
+  return ap.db
+    .selectFrom("issued_requirements")
+    .selectAll()
+    .where("binding", "=", binding)
+    .where("method", "=", "intents-transfer")
+    .executeTakeFirst();
 }
 
 /**
@@ -140,7 +146,7 @@ export async function verifyPayload(ap: Agentpay, m: Merchant, body: VerifyBody)
 
   const binding = pr.extra.binding;
   const req = await loadRequirement(ap, binding);
-  if (!req || req.account_id !== m.account || req.livemode !== m.livemode)
+  if (!req || req.account_id !== m.account || req.livemode !== m.livemode || req.fee_to === null)
     return invalid("requirement_unknown", "these requirements were not issued to this account and mode");
   if (!sameTerms(req, pr)) return invalid("invalid_payment_requirements", "the requirements were altered");
   // the merchant middleware forwards the resource it expects: it must be the one the requirements were issued for
@@ -311,6 +317,7 @@ export async function settle(ap: Agentpay, m: Merchant, body: VerifyBody, deadli
         .selectFrom("issued_requirements")
         .selectAll()
         .where("binding", "=", v.binding)
+        .where("method", "=", "intents-transfer")
         .forUpdate()
         .executeTakeFirstOrThrow();
       if (req.consumed_at) {

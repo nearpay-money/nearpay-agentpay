@@ -35,5 +35,8 @@ export function agentPaymentView(r: AgentPaymentRow): AgentPayment {
     sequence: r.version,
     // spec 0.2.1 (CR-22-AP-02): the refund a `refund` relay pays; null for other kinds
     refund: r.kind === "refund" && r.refund_id ? (fromUuid("re", r.refund_id) as AgentPayment["refund"]) : null,
+    // spec 0.3.0 (§3.1): how the payment reached the merchant; `origin` only for near-intents
+    transfer_method: r.transfer_method,
+    origin: r.transfer_method === "near-intents" ? (r.origin as AgentPayment["origin"]) : null,
   };
 }

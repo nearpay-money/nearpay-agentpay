@@ -7,6 +7,9 @@
  * | identity settlement context (cached 60 s)            | 1 s     | 2        | yes     |
  * | rails `GET /internal/executions/{id}` (relay check)  | 1 s     | 2        | yes     |
  * | rails `GET /internal/assets/{id}` (fee minimum)      | 1 s     | 2        | yes     |
+ * | rails `POST /internal/executions` (near-intents quote, owner agentpay) | 8 s | 1 | yes |
+ * | rails `POST /internal/executions/{id}/deposit_tx` (best effort) | 1 s | 2 | yes |
+ * | rails `GET /internal/chain-profiles` (cached 5 min), `GET /internal/options` | 1 s | 2 | yes |
  * | payments `POST …/agent_attempts` (creates a rails execution) | 8 s | 1 | yes  |
  * | payments `GET /internal/checkout_sessions/{id}/payer` (client secret check, CR-15-15) | 2 s | 2 | yes |
  * | payments `GET …/public` (fallback until payments serves `…/payer`) | 2 s | 2 | yes |
@@ -18,7 +21,9 @@
 import type { getPublicCheckoutSession, RouteBody, RouteResponse } from "@nearpay/spec";
 import { HttpError, httpClient, TimeoutError } from "@nearpay-internal/http";
 import {
+  type CreateExecution,
   createAgentAttempt,
+  createExecution,
   createScreening,
   type Execution,
   getExecution,
@@ -27,10 +32,14 @@ import {
   getKillSwitch,
   getPayerCheckoutSession,
   getSettlementContext,
+  listChainProfiles,
+  listInternalOptions,
   type SettlementContext,
   sandboxExecuteIntents,
   sandboxSimulateIntents,
+  submitExecutionDepositTx,
 } from "@nearpay-internal/spec";
+import type { z } from "zod";
 
 const BREAKER = { failureRate: 0.5, minCalls: 10, windowMs: 30_000, halfOpenAfterMs: 15_000 } as const;
 
@@ -53,6 +62,9 @@ export function upstreamCode(e: unknown): {
 }
 
 export type InternalAsset = RouteResponse<typeof getInternalAsset>;
+export type CreateExecutionBody = z.input<typeof CreateExecution>;
+export type ChainProfile = RouteResponse<typeof listChainProfiles>["profiles"][number];
+export type InternalOption = RouteResponse<typeof listInternalOptions>["options"][number];
 export type AgentAttempt = RouteResponse<typeof createAgentAttempt>;
 export type PublicSession = RouteResponse<typeof getPublicCheckoutSession>;
 export type PayerSession = RouteResponse<typeof getPayerCheckoutSession>;
@@ -85,22 +97,49 @@ export function identityClient(o: PeerOptions & { baseUrl: string }): Identity {
 export interface Rails {
   getExecution(id: string): Promise<Execution>;
   asset(assetId: string, livemode: boolean): Promise<InternalAsset>;
+  // stage 3 (spec 0.3.0, scope rails.executions.write): cross-chain x402 quotes owned by agentpay
+  createExecution(body: CreateExecutionBody): Promise<Execution>;
+  /** Records the agent's deposit tx and forwards it to the provider (best effort, idempotent). */
+  submitDepositTx(executionId: string, txHash: string): Promise<void>;
+  chainProfiles(): Promise<ChainProfile[]>;
+  options(q: { destination_asset: string; amount_out: string; livemode: boolean }): Promise<InternalOption[]>;
 }
 
 export function railsClient(o: PeerOptions & { baseUrl: string }): Rails {
-  const c = httpClient({
+  const common = {
     target: "rails",
     baseUrl: o.baseUrl,
-    timeoutMs: 1_000,
-    attempts: 2,
     breaker: BREAKER,
     serviceToken: o.serviceToken,
     ...(o.fetch ? { fetch: o.fetch } : {}),
-  });
+  };
+  const c = httpClient({ ...common, timeoutMs: 1_000, attempts: 2 });
+  // quoting calls 1Click: rails' quote budget, one attempt (idempotent on idempotency_key, so the caller may retry)
+  const write = httpClient({ ...common, timeoutMs: 8_000, attempts: 1 });
   return {
     getExecution: (id) => c.call(getExecution, { params: { id } }),
     asset: (assetId, livemode) =>
       c.call(getInternalAsset, { params: { asset_id: assetId }, query: { livemode: livemode ? "true" : "false" } }),
+    createExecution: (body) => write.call(createExecution, { body }),
+    submitDepositTx: async (id, tx) => {
+      await c.call(submitExecutionDepositTx, {
+        params: { id },
+        body: { tx_hash: tx },
+        idempotencyKey: `deposit_tx:${id}:${tx}`,
+      });
+    },
+    chainProfiles: async () => (await c.call(listChainProfiles)).profiles,
+    options: async (q) =>
+      (
+        await c.call(listInternalOptions, {
+          query: {
+            destination_asset: q.destination_asset,
+            destination_type: "intents_account",
+            amount_out: q.amount_out,
+            livemode: q.livemode ? "true" : "false",
+          },
+        })
+      ).options,
   };
 }
 
