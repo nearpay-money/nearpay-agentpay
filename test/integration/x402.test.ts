@@ -15,7 +15,9 @@ import {
   VerifyResponse,
 } from "@nearpay/spec";
 import { fromUuid, newId } from "@nearpay-internal/ids";
+import { createScreening, getKillSwitch } from "@nearpay-internal/spec";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readKillSwitch } from "../../src/app/kill-switch.js";
 import { AgentPaymentList } from "../support/lists.js";
 import { evmPayer, type Payer, payer } from "../support/payer.js";
 import {
@@ -181,6 +183,24 @@ describe("verify", () => {
       expect(r.status).toBe(200);
       expect(VerifyResponse.parse(r.body)).toEqual({ isValid: true, payer: p.account });
     }
+  });
+
+  it("sends the payment size (amount + fee, integer USD micros) on the payer screen (spec 0.2.1)", async () => {
+    const m = s.merchant();
+    const p = funded(payer());
+    const req = await required(m, { amount: "2500000" });
+    const terms = termsOf(req);
+    const r = await post(m, "/x402/verify", x402Body(req, p.sign(terms)));
+    expect(VerifyResponse.parse(r.body)).toEqual({ isValid: true, payer: p.account });
+    const call = s.compliance
+      .callsTo(createScreening)
+      .filter((c) => (c.body as { subject: string }).subject === p.account);
+    expect(call).toHaveLength(1);
+    const body = call[0]?.body as { context: string; amount_usd_micros?: number };
+    // USDC (6 decimals) at $1: one base unit is one micro-dollar
+    expect(body.context).toBe("x402");
+    expect(body.amount_usd_micros).toBe(Number(BigInt(terms.amount) + BigInt(terms.fee)));
+    expect(Number.isInteger(body.amount_usd_micros)).toBe(true);
   });
 
   it("returns every invalidReason it can detect", async () => {
@@ -589,6 +609,51 @@ describe("settle (live mode, NEAR RPC)", () => {
     s.ap.caches.killSwitch.clear();
     const ok = await post(m, "/x402/settle", x402Body(live, funded(payer(), s.rpc.verifier).sign(termsOf(live))), true);
     expect(ok.body.success).toBe(true);
+  });
+});
+
+describe("kill switch read at boot (spec 0.2.1)", () => {
+  it("an unknown state refuses live settles until sentinel's state is read; later events still win by version", async () => {
+    const m = s.merchant();
+    await s.admin.db.deleteFrom("kill_switch").execute();
+    s.killSwitch.fail = true;
+    s.ap.caches.killSwitch.clear();
+    try {
+      expect(await readKillSwitch(s.ap, { force: true })).toBe("unknown");
+      const live = await required(m, { livemode: true });
+      const blocked = await post(
+        m,
+        "/x402/settle",
+        x402Body(live, funded(payer(), s.rpc.verifier).sign(termsOf(live))),
+        true,
+      );
+      expect([blocked.status, blocked.body.error?.code]).toEqual([503, "rail_unavailable"]);
+      // test mode is unaffected
+      const test = await required(m);
+      expect((await post(m, "/x402/settle", x402Body(test, funded(payer()).sign(termsOf(test))))).body.success).toBe(
+        true,
+      );
+      s.killSwitch.fail = false;
+      Object.assign(s.killSwitch, { engaged: false, version: 5 });
+      expect(await readKillSwitch(s.ap, { force: true })).toBe("released");
+      expect(s.sentinel.callsTo(getKillSwitch).length).toBeGreaterThan(0);
+      const row = await s.admin.db.selectFrom("kill_switch").selectAll().executeTakeFirstOrThrow();
+      expect(row).toMatchObject({ engaged: false, event_version: 5 });
+      s.ap.caches.killSwitch.clear();
+      const ok = await post(
+        m,
+        "/x402/settle",
+        x402Body(live, funded(payer(), s.rpc.verifier).sign(termsOf(live))),
+        true,
+      );
+      expect(ok.body.success).toBe(true);
+      // once known, sentinel is not asked again and its answer would not override the stored state
+      Object.assign(s.killSwitch, { engaged: true, version: 6 });
+      expect(await readKillSwitch(s.ap, { force: true })).toBe("released");
+    } finally {
+      Object.assign(s.killSwitch, { engaged: false, version: 0, fail: false });
+      s.ap.caches.killSwitch.clear();
+    }
   });
 });
 

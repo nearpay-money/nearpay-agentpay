@@ -49,7 +49,9 @@ import {
   type Rails,
   railsClient,
   type SandboxVerifier,
+  type Sentinel,
   sandboxClient,
+  sentinelClient,
 } from "../infra/clients/peers.js";
 import { MIGRATIONS_DIR } from "../infra/db/migrations.js";
 import type { DB } from "../infra/db/schema.js";
@@ -60,6 +62,7 @@ import { type Batcher, batcher } from "../relayer/batcher/batcher.js";
 import { loadKeyFiles, type RelayerKey, registerKeys } from "../relayer/key-pool/keys.js";
 import { jobHandlers, RECURRING } from "../workers/jobs.js";
 import { type Agentpay, agentpayMetrics, newCaches, noMetrics } from "./context.js";
+import { killSwitchBootTask } from "./kill-switch.js";
 
 export interface ServiceDeps {
   database?: Database<DB>;
@@ -69,6 +72,7 @@ export interface ServiceDeps {
   rails?: Rails;
   payments?: Payments;
   compliance?: Compliance;
+  sentinel?: Sentinel | null;
   sandbox?: SandboxVerifier | null;
   chain?: NearChain | null;
   waiters?: Waiters;
@@ -108,6 +112,12 @@ function build(config: SharedConfig, deps: ServiceDeps, app: string): Built {
     rails: deps.rails ?? railsClient({ ...peer, baseUrl: config.railsUrl }),
     payments: deps.payments ?? paymentsClient({ ...peer, baseUrl: config.paymentsUrl }),
     compliance: deps.compliance ?? complianceClient({ ...peer, baseUrl: config.complianceUrl }),
+    sentinel:
+      deps.sentinel !== undefined
+        ? deps.sentinel
+        : config.sentinelUrl
+          ? sentinelClient({ ...peer, baseUrl: config.sentinelUrl })
+          : null,
     sandbox:
       deps.sandbox !== undefined
         ? deps.sandbox
@@ -189,6 +199,8 @@ export function createApi(config: ApiConfig, deps: ServiceDeps = {}): { service:
     readiness: readiness(b),
   });
   attach(b, service, deps);
+  // spec 0.2.1: learn sentinel's kill-switch state at boot (live relays are refused while it is unknown)
+  service.addBackground(killSwitchBootTask(b.ap));
   return { service, ap: b.ap };
 }
 

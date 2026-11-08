@@ -308,6 +308,7 @@ describe("POST /internal/relay kind: refund", () => {
         fee_amount: "0",
         checkout_session: null,
         resource_url: null,
+        refund: l.refund, // spec 0.2.1 (CR-22-AP-02)
       });
       const got = await s.call("GET", `/v1/agent_payments/${r.body.agent_payment_id}`, { token });
       expect(got.body).toEqual(list.body.data[0]);

@@ -6,6 +6,37 @@
  */
 import { bpsOf, ceil, div, maxOf, mul, parseDecimal, rational } from "@nearpay-internal/money";
 
+/** Largest USD-micros value sent as a JSON integer (compliance's `amount_usd_micros` is `z.int()`). */
+export const MAX_SAFE_MICROS = BigInt(Number.MAX_SAFE_INTEGER);
+
+/**
+ * Base units → USD micros at the asset's USD price, rounded **up** (spec 0.2.1: the payer screen's
+ * `amount_usd_micros`, so compliance's fail-closed threshold sees the payment size; rounding up errs toward
+ * failing closed). USD stablecoins without a price count at par. Null when no usable price is known or the
+ * value does not fit a safe JSON integer (the caller then omits it and compliance fails closed).
+ */
+export function usdMicrosForUnits(
+  units: bigint,
+  asset: { decimals: number; price_usd: string | null; is_usd_stable: boolean },
+): bigint | null {
+  if (units < 0n) return null;
+  let price: ReturnType<typeof parseDecimal>;
+  if (asset.price_usd !== null) {
+    try {
+      price = parseDecimal(asset.price_usd);
+    } catch {
+      return null;
+    }
+  } else if (asset.is_usd_stable) price = rational(1n);
+  else return null;
+  if (price.num <= 0n) return null;
+  // micros = units / 10^decimals × price × 1e6
+  const micros = ceil(
+    div(mul(mul(rational(units), price), rational(1_000_000n)), rational(10n ** BigInt(asset.decimals))),
+  );
+  return micros <= MAX_SAFE_MICROS ? micros : null;
+}
+
 /** A transfer intent moves at least one base unit; the fee transfer is never empty. */
 export const MIN_FEE_UNITS = 1n;
 

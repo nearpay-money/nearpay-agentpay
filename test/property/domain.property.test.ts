@@ -5,7 +5,7 @@
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { x402Binding } from "../../src/domain/binding/binding.js";
-import { x402Fee } from "../../src/domain/facilitator-payment/fee.js";
+import { MAX_SAFE_MICROS, usdMicrosForUnits, x402Fee } from "../../src/domain/facilitator-payment/fee.js";
 import { type AgentPaymentStatus, canTransition, isTerminal } from "../../src/domain/facilitator-payment/status.js";
 import { matchExecuted, maxBatch, selectBatch } from "../../src/domain/relay-batch/batch.js";
 
@@ -158,6 +158,37 @@ describe("lifecycle under random batch outcomes", () => {
         }
         expect(settledCount).toBeLessThanOrEqual(1);
       }),
+    );
+  });
+});
+
+describe("x402 payer-screen amount (property, spec 0.2.1)", () => {
+  it("usdMicrosForUnits is the exact value rounded up (exact ≤ micros < exact + 1), monotone, safe integer", () => {
+    fc.assert(
+      fc.property(
+        fc.bigInt({ min: 0n, max: 10n ** 30n }),
+        fc.bigInt({ min: 0n, max: 10n ** 30n }),
+        fc.integer({ min: 0, max: 24 }),
+        fc.integer({ min: 1, max: 10_000_000 }),
+        (a, b, decimals, priceMicros) => {
+          const asset = { decimals, price_usd: (priceMicros / 1_000_000).toFixed(6), is_usd_stable: false };
+          const scale = 10n ** BigInt(decimals);
+          const m = usdMicrosForUnits(a, asset);
+          // exact micros × scale = a × priceMicros
+          const exactNum = a * BigInt(priceMicros);
+          if (m === null) {
+            expect((exactNum + scale - 1n) / scale > MAX_SAFE_MICROS).toBe(true);
+            return;
+          }
+          expect(m * scale >= exactNum).toBe(true);
+          expect((m - 1n) * scale < exactNum || m === 0n).toBe(true);
+          const [lo, hi] = a <= b ? [a, b] : [b, a];
+          const ml = usdMicrosForUnits(lo, asset);
+          const mh = usdMicrosForUnits(hi, asset);
+          if (ml !== null && mh !== null) expect(ml <= mh).toBe(true);
+        },
+      ),
+      { numRuns: 1000 },
     );
   });
 });

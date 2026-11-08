@@ -10,7 +10,13 @@ import {
 } from "@nearpay-internal/intents";
 import { describe, expect, it } from "vitest";
 import { jcs, jcsEqual, payloadHash, x402Binding } from "../../src/domain/binding/binding.js";
-import { MIN_FEE_UNITS, unitsForUsdMicros, x402Fee } from "../../src/domain/facilitator-payment/fee.js";
+import {
+  MAX_SAFE_MICROS,
+  MIN_FEE_UNITS,
+  unitsForUsdMicros,
+  usdMicrosForUnits,
+  x402Fee,
+} from "../../src/domain/facilitator-payment/fee.js";
 import { claimedBinding, DEADLINE_MARGIN_MS, matchMessage } from "../../src/domain/facilitator-payment/match.js";
 import { relayCode, settleError } from "../../src/domain/facilitator-payment/reasons.js";
 import { canTransition, isTerminal } from "../../src/domain/facilitator-payment/status.js";
@@ -281,5 +287,34 @@ describe("quota windows", () => {
     expect(w.ok).toBe(false);
     w = hit(w.window, 2_000, 2);
     expect(w).toEqual({ ok: true, window: { second: 2, count: 1 } });
+  });
+});
+
+describe("usdMicrosForUnits (spec 0.2.1: x402 payer screen amount)", () => {
+  const usdc = { decimals: 6, price_usd: "1", is_usd_stable: true };
+  it("converts base units at the USD price, rounding up, integer only", () => {
+    expect(usdMicrosForUnits(0n, usdc)).toBe(0n);
+    expect(usdMicrosForUnits(2_500_000n, usdc)).toBe(2_500_000n);
+    expect(usdMicrosForUnits(1n, { decimals: 24, price_usd: "4", is_usd_stable: false })).toBe(1n); // tiny → up
+    expect(usdMicrosForUnits(10n ** 24n, { decimals: 24, price_usd: "4.25", is_usd_stable: false })).toBe(4_250_000n);
+    expect(usdMicrosForUnits(3n, { decimals: 0, price_usd: "0.3333333", is_usd_stable: false })).toBe(1_000_000n);
+  });
+  it("stables without a price count at par; no price, a bad price or an unsafe size gives null", () => {
+    expect(usdMicrosForUnits(5_000_000n, { decimals: 6, price_usd: null, is_usd_stable: true })).toBe(5_000_000n);
+    expect(usdMicrosForUnits(5n, { decimals: 6, price_usd: null, is_usd_stable: false })).toBeNull();
+    expect(usdMicrosForUnits(5n, { decimals: 6, price_usd: "abc", is_usd_stable: false })).toBeNull();
+    expect(usdMicrosForUnits(5n, { decimals: 6, price_usd: "0", is_usd_stable: false })).toBeNull();
+    expect(usdMicrosForUnits(-1n, usdc)).toBeNull();
+    expect(usdMicrosForUnits(MAX_SAFE_MICROS, usdc)).toBe(MAX_SAFE_MICROS);
+    expect(usdMicrosForUnits(MAX_SAFE_MICROS + 1n, usdc)).toBeNull();
+  });
+  it("round-trips with unitsForUsdMicros within one unit (both round up)", () => {
+    for (const micros of [1n, 999n, 10_000n, 123_456_789n]) {
+      const asset = { decimals: 18, price_usd: "2500", is_usd_stable: false };
+      const units = unitsForUsdMicros(micros, asset) as bigint;
+      const back = usdMicrosForUnits(units, asset) as bigint;
+      expect(back >= micros).toBe(true);
+      expect(back - micros <= 1n).toBe(true);
+    }
   });
 });
