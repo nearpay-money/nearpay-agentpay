@@ -33,5 +33,7 @@ export function agentPaymentView(r: AgentPaymentRow): AgentPayment {
     // the aggregate version: every change goes through ledger.updatePayment (or the batcher's tx_hash
     // write), which bumps it; it is also the `aggregate.version` of the agent payment's events (0.1.5)
     sequence: r.version,
+    // spec 0.2.1 (CR-22-AP-02): the refund a `refund` relay pays; null for other kinds
+    refund: r.kind === "refund" && r.refund_id ? (fromUuid("re", r.refund_id) as AgentPayment["refund"]) : null,
   };
 }

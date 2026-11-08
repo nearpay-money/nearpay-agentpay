@@ -19,6 +19,7 @@ import {
   getExecution,
   getInternalAsset,
   getInternalRefund,
+  getKillSwitch,
   getPayerCheckoutSession,
   getSettlementContext,
   INTERNAL_ROUTES,
@@ -47,6 +48,7 @@ import {
 import { ed25519 } from "@noble/curves/ed25519.js";
 import bs58 from "bs58";
 import type { Agentpay } from "../../src/app/context.js";
+import { readKillSwitch } from "../../src/app/kill-switch.js";
 import { type BatcherDeps, createApi, createBatcher, type ServiceDeps } from "../../src/app/services.js";
 import type { BatcherConfig } from "../../src/config.js";
 import { MIGRATIONS_DIR } from "../../src/infra/db/migrations.js";
@@ -106,6 +108,9 @@ export interface Stack {
   readonly rails: MockPeer;
   readonly payments: MockPeer;
   readonly compliance: MockPeer;
+  /** Sentinel mock answering `getKillSwitch` (spec 0.2.1) with {@link Stack.killSwitch}. */
+  readonly sentinel: MockPeer;
+  readonly killSwitch: { engaged: boolean; version: number; fail: boolean };
   readonly sandbox: MockPeer;
   /** Sandbox (test mode) Verifier. */
   readonly testVerifier: FakeVerifier;
@@ -151,6 +156,8 @@ export interface StackOptions {
   autoBatch?: boolean;
   /** Run the real nearpay-sandbox image as the test-mode Verifier instead of the mock. */
   realSandbox?: boolean;
+  /** Leave the kill-switch state unknown at start (tests of the boot read). */
+  killSwitchUnknown?: boolean;
 }
 
 export function relayerKey(): RelayerKey {
@@ -342,6 +349,20 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
     post_screen_required: false,
   }));
 
+  // ---- sentinel: kill-switch state (spec 0.2.1 getKillSwitch)
+  const killSwitch = { engaged: false, version: 0, fail: false };
+  const sentinel = await mockPeer({ service: "sentinel", routes: INTERNAL_ROUTES });
+  sentinel.on(getKillSwitch, async () => {
+    if (killSwitch.fail) mockError("rail_unavailable");
+    return {
+      engaged: killSwitch.engaged,
+      reason: "test",
+      actor: "sentinel",
+      updated_at: new Date().toISOString(),
+      version: killSwitch.version,
+    };
+  });
+
   // ---- sandbox: simulated Verifier (test mode)
   const testVerifier = new FakeVerifier();
   const sandbox = await mockPeer({ service: "sandbox", routes: INTERNAL_ROUTES });
@@ -415,6 +436,7 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
     paymentsUrl: payments.url,
     railsUrl: rails.url,
     complianceUrl: compliance.url,
+    sentinelUrl: sentinel.url,
     sandboxBaseUrl: real?.url ?? sandbox.url,
     nearRpcUrls: [rpc.url],
     intentsContract: "intents.near",
@@ -437,6 +459,8 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
     database: createDb<DB>({ url: appUrl, applicationName: "agentpay-api-test" }),
   });
   const { port } = await api.start();
+  // the boot read runs in the background; make the state known before any live test (spec 0.2.1)
+  if (o.killSwitchUnknown !== true) await readKillSwitch(ap, { force: true });
   const b = await createBatcher(config, {
     ...deps,
     database: createDb<DB>({ url: appUrl, applicationName: "agentpay-batcher-test" }),
@@ -466,6 +490,8 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
     rails,
     payments,
     compliance,
+    sentinel,
+    killSwitch,
     sandbox,
     testVerifier,
     rpc,
@@ -672,7 +698,7 @@ export async function startStack(o: StackOptions = {}): Promise<Stack> {
       await b.service.stop().catch(() => {});
       await api.stop().catch(() => {});
       await bus.close().catch(() => {});
-      for (const m of [identity, rails, payments, compliance, sandbox]) await m.stop().catch(() => {});
+      for (const m of [identity, rails, payments, compliance, sentinel, sandbox]) await m.stop().catch(() => {});
       await rpc.stop();
       await real?.stop();
       await admin.close();

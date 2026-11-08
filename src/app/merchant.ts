@@ -3,6 +3,7 @@ import { fromUuid, toUuid } from "@nearpay-internal/ids";
 import type { ApiError } from "@nearpay-internal/service";
 import type { SettlementContext } from "@nearpay-internal/spec";
 import type { Agentpay } from "./context.js";
+import { readKillSwitch } from "./kill-switch.js";
 import { railUnavailable } from "./verifier.js";
 
 export interface Merchant {
@@ -34,12 +35,14 @@ export async function accountRps(ap: Agentpay, m: Merchant): Promise<number> {
   });
 }
 
-/** True while sentinel's kill switch is engaged (live settles and relays stop, §8); cached 1 s. */
+/**
+ * True while sentinel's kill switch is engaged **or its state is unknown** (live settles and relays stop, §8;
+ * spec 0.2.1: fail closed until a state was read from sentinel or an event applied); cached 1 s. An unknown state
+ * triggers a (throttled) `getKillSwitch` read first.
+ */
 export async function killSwitchEngaged(ap: Agentpay): Promise<boolean> {
-  return ap.caches.killSwitch.get("ks", async () => {
-    const k = await ap.db.selectFrom("kill_switch").select("engaged").where("id", "=", 1).executeTakeFirst();
-    return k?.engaged ?? false;
-  });
+  const st = await ap.caches.killSwitch.get("ks", () => readKillSwitch(ap));
+  return st !== "released";
 }
 
 export function killSwitchError(): ApiError {

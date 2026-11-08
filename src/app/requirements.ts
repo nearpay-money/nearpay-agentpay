@@ -54,7 +54,7 @@ export function resolveDestination(ctx: SettlementContext, payTo?: string, asset
   return d;
 }
 
-async function assetInfo(ap: Agentpay, assetId: string, livemode: boolean): Promise<InternalAsset> {
+export async function assetInfo(ap: Agentpay, assetId: string, livemode: boolean): Promise<InternalAsset> {
   try {
     return await ap.caches.assets.get(`${livemode}:${assetId}`, () => ap.rails.asset(assetId, livemode));
   } catch (e) {

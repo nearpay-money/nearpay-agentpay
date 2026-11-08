@@ -24,6 +24,7 @@ import { verifySigned } from "@nearpay-internal/intents";
 import { ApiError } from "@nearpay-internal/service";
 import type { z } from "zod";
 import { jcsEqual, payloadHash } from "../domain/binding/binding.js";
+import { usdMicrosForUnits } from "../domain/facilitator-payment/fee.js";
 import { matchMessage } from "../domain/facilitator-payment/match.js";
 import { settleError } from "../domain/facilitator-payment/reasons.js";
 import { isTerminal } from "../domain/facilitator-payment/status.js";
@@ -31,6 +32,7 @@ import { upstreamCode } from "../infra/clients/peers.js";
 import type { Agentpay } from "./context.js";
 import { transition } from "./ledger.js";
 import { accountRps, acctId, killSwitchEngaged, killSwitchError, type Merchant } from "./merchant.js";
+import { assetInfo } from "./requirements.js";
 import { railUnavailable, simulate, VerifierUnavailable } from "./verifier.js";
 import type { AgentPaymentRow } from "./views.js";
 
@@ -89,17 +91,34 @@ async function loadRequirement(ap: Agentpay, binding: string) {
   return ap.db.selectFrom("issued_requirements").selectAll().where("binding", "=", binding).executeTakeFirst();
 }
 
-async function screen(ap: Agentpay, m: Merchant, payer: string): Promise<"allow" | "block"> {
+/**
+ * The payment size for the payer screen (spec 0.2.1): `amount + fee` of the issued requirement in USD micros at
+ * the asset's price (rails' registry, cached), integer, rounded up. Null when no price is known or the registry is
+ * unreachable: the screen then goes without it (compliance fails closed only while it is degraded).
+ */
+async function paymentUsdMicros(ap: Agentpay, m: Merchant, req: RequirementRow): Promise<number | null> {
   try {
-    const s = await ap.caches.screenings.get(`${m.livemode}:${payer}`, () =>
-      ap.compliance.screen({
+    const asset = await assetInfo(ap, req.asset_id, m.livemode);
+    const micros = usdMicrosForUnits(BigInt(req.amount) + BigInt(req.fee_amount), asset);
+    return micros === null ? null : Number(micros);
+  } catch {
+    return null;
+  }
+}
+
+async function screen(ap: Agentpay, m: Merchant, payer: string, req: RequirementRow): Promise<"allow" | "block"> {
+  try {
+    const s = await ap.caches.screenings.get(`${m.livemode}:${payer}`, async () => {
+      const micros = await paymentUsdMicros(ap, m, req);
+      return ap.compliance.screen({
         subject_type: "near_account",
         subject: payer,
         context: "x402",
         account_id: acctId(m),
         livemode: m.livemode,
-      }),
-    );
+        ...(micros !== null ? { amount_usd_micros: micros } : {}),
+      });
+    });
     return s.decision === "block" ? "block" : "allow";
   } catch (e) {
     const u = upstreamCode(e);
@@ -165,7 +184,8 @@ export async function verifyPayload(ap: Agentpay, m: Merchant, body: VerifyBody)
   }
   if (!sim.ok) return invalid(sim.reason, sim.detail);
 
-  if ((await screen(ap, m, payer)) === "block") return invalid("payer_blocked", "the payer cannot pay this merchant");
+  if ((await screen(ap, m, payer, req)) === "block")
+    return invalid("payer_blocked", "the payer cannot pay this merchant");
 
   const rps = await accountRps(ap, m);
   if (!(await ap.limiter.take(`acct:${m.account}:${m.livemode}`, rps)))

@@ -24,6 +24,7 @@ import {
   getExecution,
   getInternalAsset,
   getInternalRefund,
+  getKillSwitch,
   getPayerCheckoutSession,
   getSettlementContext,
   type SettlementContext,
@@ -158,6 +159,24 @@ export function complianceClient(o: PeerOptions & { baseUrl: string }): Complian
     ...(o.fetch ? { fetch: o.fetch } : {}),
   });
   return { screen: (body) => c.call(createScreening, { body }) };
+}
+
+/** Sentinel `getKillSwitch` (spec 0.2.1, scope `sentinel.read`): read while the stored state is unknown. */
+export interface Sentinel {
+  killSwitch(): Promise<{ engaged: boolean; reason: string; actor: string; version?: number | undefined }>;
+}
+
+export function sentinelClient(o: PeerOptions & { baseUrl: string }): Sentinel {
+  const c = httpClient({
+    target: "sentinel",
+    baseUrl: o.baseUrl,
+    timeoutMs: 2_000,
+    attempts: 2,
+    breaker: BREAKER,
+    serviceToken: o.serviceToken,
+    ...(o.fetch ? { fetch: o.fetch } : {}),
+  });
+  return { killSwitch: () => c.call(getKillSwitch) };
 }
 
 /** The simulated Verifier (test mode only; it rejects live-mode calls, INV-8). */

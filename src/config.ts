@@ -21,6 +21,8 @@ const shared = {
   paymentsUrl: http(),
   railsUrl: http(),
   complianceUrl: http(),
+  /** Sentinel (`getKillSwitch` at boot, spec 0.2.1). Unset: the kill-switch state waits for an event (live relays refused until then). */
+  sentinelUrl: http().optional(),
   /** Test mode (nearpay-sandbox `/sim/intents/*`); without it test-mode payloads are refused. */
   sandboxBaseUrl: http().optional(),
   /** NEAR RPC providers for live mode (simulate, send, status), tried in order. */

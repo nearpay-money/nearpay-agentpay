@@ -10,6 +10,7 @@ import type {
   Rails,
   SandboxVerifier,
   Screening,
+  Sentinel,
 } from "../infra/clients/peers.js";
 import type { DB } from "../infra/db/schema.js";
 import type { Limiter } from "../infra/limiter.js";
@@ -82,8 +83,11 @@ export interface Caches {
   /** Successful verify results by payload hash (§6 step 7: 60 s). */
   readonly verified: TtlCache<VerifiedPayload>;
   readonly quotas: TtlCache<number>;
-  readonly killSwitch: TtlCache<boolean>;
+  readonly killSwitch: TtlCache<KillSwitchKnowledge>;
 }
+
+/** Engaged, released, or unknown (no state ever stored: live settles and relays fail closed, spec 0.2.1). */
+export type KillSwitchKnowledge = "engaged" | "released" | "unknown";
 
 export function newCaches(now: () => number = Date.now): Caches {
   return {
@@ -105,6 +109,8 @@ export interface Agentpay {
   readonly rails: Rails;
   readonly payments: Payments;
   readonly compliance: Compliance;
+  /** Sentinel `getKillSwitch` (spec 0.2.1); null when `NP_SENTINEL_URL` is unset. */
+  readonly sentinel: Sentinel | null;
   /** Test mode Verifier (nearpay-sandbox); null refuses test-mode payloads. */
   readonly sandbox: SandboxVerifier | null;
   /** Live Verifier over NEAR RPC; null (no RPC URLs) refuses live payloads. */
