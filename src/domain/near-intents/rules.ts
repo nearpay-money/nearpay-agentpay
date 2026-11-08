@@ -12,7 +12,7 @@
  *   failed executions create none (nothing reached the merchant).
  * - settle answers: success needs a recorded settlement and the presented deposit tx among the operation's.
  */
-import { QUOTED_ONLY_EXTRA } from "@nearpay/spec";
+import { NearAccountId, QUOTED_ONLY_EXTRA } from "@nearpay/spec";
 
 // ---------------------------------------------------------------------------------------------- terms
 
@@ -192,6 +192,9 @@ export function decideExecutionEvent(subject: ExecutionSubject, x: ExecutionFact
     if (x.state !== "succeeded") return { kind: "defect", detail: `settled event in state ${x.state}` };
     if (!x.evidence) return { kind: "defect", detail: "settled execution without evidence" };
     if (!x.evidence.sender) return { kind: "defect", detail: "settled execution without evidence.sender" };
+    // the agent payment's `payer` is a NEAR account (the Intents account that delivered)
+    if (!NearAccountId.safeParse(x.evidence.sender).success)
+      return { kind: "defect", detail: "evidence.sender is not a NEAR account" };
     if (x.settled_amount === null || BigInt(x.settled_amount) <= 0n)
       return { kind: "defect", detail: "settled execution without a settled amount" };
     if (!x.deposit) return { kind: "defect", detail: "settled route execution without deposit instructions" };

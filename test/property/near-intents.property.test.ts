@@ -60,7 +60,7 @@ describe("who gets an agent payment", () => {
         fc.constantFrom(...STATES),
         fc.constantFrom("agentpay", "payments", undefined, "other"),
         fc.boolean(),
-        fc.option(fc.constantFrom("solver.near", "intents.near", ""), { nil: null }),
+        fc.option(fc.constantFrom("solver.near", "intents.near", "", "Not A NEAR account"), { nil: null }),
         fc.option(units, { nil: null }),
         (subject, state, owner, withEvidence, sender, settled) => {
           const x = {
@@ -78,6 +78,7 @@ describe("who gets an agent payment", () => {
               state === "succeeded" &&
               withEvidence &&
               !!sender &&
+              sender !== "Not A NEAR account" &&
               settled !== null,
           );
           if (owner !== "agentpay") expect(d.kind).toBe("ignore");

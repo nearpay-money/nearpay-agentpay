@@ -148,6 +148,7 @@ describe("execution events", () => {
     expect(d("evt.rails.execution.settled", quoted)).toBe("defect");
     expect(d("evt.rails.execution.settled", { ...settled, evidence: null })).toBe("defect");
     expect(d("evt.rails.execution.settled", settledExecution(quoted, { sender: null }))).toBe("defect");
+    expect(d("evt.rails.execution.settled", settledExecution(quoted, { sender: "0xABC" }))).toBe("defect");
     expect(d("evt.rails.execution.settled", { ...settled, settled_amount: null })).toBe("defect");
     expect(d("evt.rails.execution.settled", { ...settled, settled_amount: "0" })).toBe("defect");
     expect(d("evt.rails.execution.settled", { ...settled, deposit: null })).toBe("defect");
