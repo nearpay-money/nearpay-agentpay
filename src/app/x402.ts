@@ -9,6 +9,10 @@
  * one transaction → wait up to 8 s for the batcher's final outcome (`settlement_pending` otherwise).
  * The first response with the final outcome is the delivery; later ones say `replayed: true`.
  */
+
+import { fromUuid, uuidv7 } from "@nearpay-internal/ids";
+import { verifySigned } from "@nearpay-internal/intents";
+import { ApiError } from "@nearpay-internal/service";
 import type {
   IntentMessage,
   MultiPayload,
@@ -17,11 +21,8 @@ import type {
   SupportedResponse,
   VerifyRequest,
   VerifyResponse,
-} from "@nearpay/spec";
-import { X402_NETWORK, X402_SCHEME, X402_TRANSFER_METHOD, X402_VERSION } from "@nearpay/spec";
-import { fromUuid, uuidv7 } from "@nearpay-internal/ids";
-import { verifySigned } from "@nearpay-internal/intents";
-import { ApiError } from "@nearpay-internal/service";
+} from "@nearpay-money/spec";
+import { X402_NETWORK, X402_SCHEME, X402_TRANSFER_METHOD, X402_VERSION } from "@nearpay-money/spec";
 import type { z } from "zod";
 import { jcsEqual, payloadHash } from "../domain/binding/binding.js";
 import { usdMicrosForUnits } from "../domain/facilitator-payment/fee.js";

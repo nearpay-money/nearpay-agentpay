@@ -17,8 +17,9 @@
  * Final x402 payments emit `evt.agentpay.agent_payment.*` (ledger) and wake settle waiters (`ap:<id>`).
  * Relayer keys only call `execute_intents` with zero deposit: the payload executes exactly as signed (INV-1).
  */
-import type { MultiPayload } from "@nearpay/spec";
+
 import { uuidv7 } from "@nearpay-internal/ids";
+import type { MultiPayload } from "@nearpay-money/spec";
 import type { Agentpay } from "../../app/context.js";
 import { updatePayment } from "../../app/ledger.js";
 import { simulate, VerifierUnavailable } from "../../app/verifier.js";

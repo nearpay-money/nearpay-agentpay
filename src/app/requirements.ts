@@ -4,11 +4,12 @@
  * then the account's default destination); the fee is the `intents_transfer` rule of the account's fee
  * schedule (min fee at the asset's USD price); the binding hashes every field plus 16 random bytes.
  */
-import type { PaymentRequired, PaymentRequirements } from "@nearpay/spec";
-import { X402_NETWORK, X402_SCHEME, X402_TRANSFER_METHOD, X402_VERSION } from "@nearpay/spec";
+
 import { hex } from "@nearpay-internal/intents";
 import { ApiError } from "@nearpay-internal/service";
 import type { InternalSettlementDestination, SettlementContext } from "@nearpay-internal/spec";
+import type { PaymentRequired, PaymentRequirements } from "@nearpay-money/spec";
+import { X402_NETWORK, X402_SCHEME, X402_TRANSFER_METHOD, X402_VERSION } from "@nearpay-money/spec";
 import type { z } from "zod";
 import { x402Binding } from "../domain/binding/binding.js";
 import { unitsForUsdMicros, x402Fee } from "../domain/facilitator-payment/fee.js";

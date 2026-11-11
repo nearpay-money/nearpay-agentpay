@@ -4,10 +4,11 @@
  * (payments' service token only), idempotency, single live payload per binding, and the batcher
  * relaying checkout payloads without emitting agent payment events (rails settles the execution).
  */
-import { AgentPayRequirements, agentPay as agentPayRoute, getPublicCheckoutSession } from "@nearpay/spec";
+
 import { fromUuid } from "@nearpay-internal/ids";
 import { getPayerCheckoutSession } from "@nearpay-internal/spec";
 import { mintServiceToken } from "@nearpay-internal/testing";
+import { AgentPayRequirements, agentPay as agentPayRoute, getPublicCheckoutSession } from "@nearpay-money/spec";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Payer, payer } from "../support/payer.js";
 import {

@@ -12,7 +12,7 @@
  *   failed executions create none (nothing reached the merchant).
  * - settle answers: success needs a recorded settlement and the presented deposit tx among the operation's.
  */
-import { NearAccountId, QUOTED_ONLY_EXTRA } from "@nearpay/spec";
+import { NearAccountId, QUOTED_ONLY_EXTRA } from "@nearpay-money/spec";
 
 // ---------------------------------------------------------------------------------------------- terms
 

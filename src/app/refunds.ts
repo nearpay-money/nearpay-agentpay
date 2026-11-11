@@ -20,10 +20,11 @@
  * payer-side evidence (INV-2); the agent payment row is the relay record. NearPay keys only pay gas
  * (INV-1): the relayer's function-call key submits the payload exactly as the merchant signed it.
  */
-import type { MultiPayload } from "@nearpay/spec";
+
 import { fromUuid, isId, toUuid, uuidv7 } from "@nearpay-internal/ids";
 import { verifySigned } from "@nearpay-internal/intents";
 import { ApiError } from "@nearpay-internal/service";
+import type { MultiPayload } from "@nearpay-money/spec";
 import { payloadHash } from "../domain/binding/binding.js";
 import { checkIssued, type IssuedRefundPayload, matchRefundPayload } from "../domain/refund-relay/match.js";
 import { type InternalRefund, upstreamCode } from "../infra/clients/peers.js";

@@ -18,7 +18,6 @@
  * | sandbox `/sim/intents/*` (test mode)                 | 3 s / 10 s | 1     | no      |
  */
 
-import type { getPublicCheckoutSession, RouteBody, RouteResponse } from "@nearpay/spec";
 import { HttpError, httpClient, TimeoutError } from "@nearpay-internal/http";
 import {
   type CreateExecution,
@@ -39,6 +38,7 @@ import {
   sandboxSimulateIntents,
   submitExecutionDepositTx,
 } from "@nearpay-internal/spec";
+import type { getPublicCheckoutSession, RouteBody, RouteResponse } from "@nearpay-money/spec";
 import type { z } from "zod";
 
 const BREAKER = { failureRate: 0.5, minCalls: 10, windowMs: 30_000, halfOpenAfterMs: 15_000 } as const;

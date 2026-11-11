@@ -4,7 +4,6 @@
  * message, fresh nonce) and signed the way the dashboard / SDK signer signs them.
  */
 import { randomBytes } from "node:crypto";
-import type { IntentMessage, MultiPayload } from "@nearpay/spec";
 import {
   buildPayload,
   evmAddress,
@@ -15,6 +14,7 @@ import {
   signNep413,
   signRawEd25519,
 } from "@nearpay-internal/intents";
+import type { IntentMessage, MultiPayload } from "@nearpay-money/spec";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 import bs58 from "bs58";

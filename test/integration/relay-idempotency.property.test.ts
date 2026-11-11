@@ -7,8 +7,9 @@
  *   - each leg has at most one agent payment and one `queued` transition, and after relaying the
  *     payer received the leg amount exactly once (never a second relay).
  */
-import type { IntentMessage } from "@nearpay/spec";
+
 import { mintServiceToken } from "@nearpay-internal/testing";
+import type { IntentMessage } from "@nearpay-money/spec";
 import fc from "fast-check";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Signer, signer } from "../support/refund.js";

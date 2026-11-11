@@ -5,16 +5,17 @@
  * settles (pending, waiting, success, replayed, deposit_not_found, refunds), and the execution consumer (merchant
  * record only on `settled`, other owners ignored, duplicates/stale events, rails defects, orphan quotes).
  */
+
+import { fromUuid, newId, toUuid } from "@nearpay-internal/ids";
+import type { Execution } from "@nearpay-internal/spec";
+import { domainEvent } from "@nearpay-internal/testing";
 import {
   AgentPayment,
   NearIntentsSettleResponse,
   NearIntentsVerifyResponse,
   quotedRequirements,
   X402PaymentRequiredAny,
-} from "@nearpay/spec";
-import { fromUuid, newId, toUuid } from "@nearpay-internal/ids";
-import type { Execution } from "@nearpay-internal/spec";
-import { domainEvent } from "@nearpay-internal/testing";
+} from "@nearpay-money/spec";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { storeKillSwitch } from "../../src/app/kill-switch.js";
 import { mintOperationToken, nearIntentsBinding } from "../../src/domain/near-intents/kit.js";

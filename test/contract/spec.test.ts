@@ -5,6 +5,19 @@
  */
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
+import { unhandledSubjects } from "@nearpay-internal/bus";
+import { uuidv7 } from "@nearpay-internal/ids";
+import { unimplementedRoutes } from "@nearpay-internal/service";
+import {
+  createExecution,
+  getPayerCheckoutSession,
+  INTERNAL_ROUTES,
+  relaySignedIntent,
+  SUBJECTS,
+  type Subject,
+  submitExecutionDepositTx,
+} from "@nearpay-internal/spec";
+import { USDC_NEAR } from "@nearpay-internal/testing";
 import {
   AgentPayment,
   decodeX402Header,
@@ -22,20 +35,7 @@ import {
   x402NearIntentsRequirements,
   x402NearIntentsSettle,
   x402NearIntentsVerify,
-} from "@nearpay/spec";
-import { unhandledSubjects } from "@nearpay-internal/bus";
-import { uuidv7 } from "@nearpay-internal/ids";
-import { unimplementedRoutes } from "@nearpay-internal/service";
-import {
-  createExecution,
-  getPayerCheckoutSession,
-  INTERNAL_ROUTES,
-  relaySignedIntent,
-  SUBJECTS,
-  type Subject,
-  submitExecutionDepositTx,
-} from "@nearpay-internal/spec";
-import { USDC_NEAR } from "@nearpay-internal/testing";
+} from "@nearpay-money/spec";
 import { describe, expect, it } from "vitest";
 import { agentpayRoutes } from "../../src/api/routes.js";
 import { paymentRequirements } from "../../src/app/requirements.js";

@@ -1,4 +1,3 @@
-import { Binding, type IntentMessage } from "@nearpay/spec";
 import {
   buildPayload,
   buildTransferIntents,
@@ -8,6 +7,7 @@ import {
   signRawEd25519,
   verifySigned,
 } from "@nearpay-internal/intents";
+import { Binding, type IntentMessage } from "@nearpay-money/spec";
 import { describe, expect, it } from "vitest";
 import { jcs, jcsEqual, payloadHash, x402Binding } from "../../src/domain/binding/binding.js";
 import {

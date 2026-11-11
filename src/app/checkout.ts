@@ -12,11 +12,12 @@
  * agentpay never marks a checkout payment paid: rails' NEAR indexer settles the execution from the
  * binding memo (single evidence path, INV-2); the agent payment row is the relay record.
  */
-import type { AgentPayRequirements, MultiPayload, PayerAttempt } from "@nearpay/spec";
+
 import { fromUuid, toUuid, uuidv7 } from "@nearpay-internal/ids";
 import { verifySigned } from "@nearpay-internal/intents";
 import { ApiError } from "@nearpay-internal/service";
 import type { Execution } from "@nearpay-internal/spec";
+import type { AgentPayRequirements, MultiPayload, PayerAttempt } from "@nearpay-money/spec";
 import type { z } from "zod";
 import { payloadHash } from "../domain/binding/binding.js";
 import { claimedBinding, matchMessage } from "../domain/facilitator-payment/match.js";

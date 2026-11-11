@@ -13,7 +13,7 @@
  * | EXPERIMENTAL_tx_status   | 3 s     |
  * | view_access_key, block   | 3 s     |
  */
-import type { MultiPayload } from "@nearpay/spec";
+
 import {
   classifyVerifierError,
   type ExecuteResult,
@@ -24,6 +24,7 @@ import {
   type SimulateIntentsOutput,
   VerifierError,
 } from "@nearpay-internal/intents";
+import type { MultiPayload } from "@nearpay-money/spec";
 
 export { RpcError, VerifierError };
 
