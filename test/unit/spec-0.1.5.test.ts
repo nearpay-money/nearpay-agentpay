@@ -2,8 +2,9 @@
  * Spec 0.1.5 fields agentpay produces: `SettleResponse.replayed` (CR-15-12), the requirement's
  * `extra.deadline` (CR-15-11) and `AgentPayment.sequence` (CR-15-09).
  */
-import { AgentPayment, PaymentRequirements, SettleResponse } from "@nearpay/spec";
+
 import { USDC_NEAR } from "@nearpay-internal/testing";
+import { AgentPayment, PaymentRequirements, SettleResponse } from "@nearpay-money/spec";
 import { describe, expect, it } from "vitest";
 import type { Agentpay } from "../../src/app/context.js";
 import { paymentRequirements } from "../../src/app/requirements.js";

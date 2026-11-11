@@ -16,6 +16,11 @@
  * written by the consumer of `evt.rails.execution.settled`, never from a provider status read here.
  */
 import { createHash } from "node:crypto";
+import { validateAddress } from "@nearpay-internal/chains";
+import { uuidv7 } from "@nearpay-internal/ids";
+import { hex } from "@nearpay-internal/intents";
+import { ApiError } from "@nearpay-internal/service";
+import type { Execution } from "@nearpay-internal/spec";
 import type {
   NearIntentsPaymentRequirements,
   NearIntentsSettleResponse,
@@ -23,7 +28,7 @@ import type {
   NearIntentsVerifyResponse,
   X402PaymentRequiredAny,
   x402NearIntentsRequirements,
-} from "@nearpay/spec";
+} from "@nearpay-money/spec";
 import {
   parseOperationToken,
   X402_NEAR_INTENTS_FLOW,
@@ -31,12 +36,7 @@ import {
   X402_NETWORK,
   X402_SCHEME,
   X402_VERSION,
-} from "@nearpay/spec";
-import { validateAddress } from "@nearpay-internal/chains";
-import { uuidv7 } from "@nearpay-internal/ids";
-import { hex } from "@nearpay-internal/intents";
-import { ApiError } from "@nearpay-internal/service";
-import type { Execution } from "@nearpay-internal/spec";
+} from "@nearpay-money/spec";
 import type { Insertable } from "kysely";
 import type { z } from "zod";
 import { jcsEqual } from "../domain/binding/binding.js";

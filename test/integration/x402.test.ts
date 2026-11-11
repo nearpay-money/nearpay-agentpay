@@ -5,6 +5,8 @@
  * payment reads and events.
  */
 import { randomUUID } from "node:crypto";
+import { fromUuid, newId } from "@nearpay-internal/ids";
+import { createScreening, getKillSwitch } from "@nearpay-internal/spec";
 import {
   AgentPayment,
   decodeX402Header,
@@ -13,9 +15,7 @@ import {
   SettleResponse,
   SupportedResponse,
   VerifyResponse,
-} from "@nearpay/spec";
-import { fromUuid, newId } from "@nearpay-internal/ids";
-import { createScreening, getKillSwitch } from "@nearpay-internal/spec";
+} from "@nearpay-money/spec";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { readKillSwitch } from "../../src/app/kill-switch.js";
 import { AgentPaymentList } from "../support/lists.js";

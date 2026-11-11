@@ -2,9 +2,10 @@
  * The Verifier per mode (INV-8): live payloads are simulated and executed on `intents.near` over NEAR
  * RPC; test payloads only ever reach the sandbox's simulated Verifier (`/sim/intents/*`).
  */
-import type { MultiPayload } from "@nearpay/spec";
+
 import { classifyVerifierError } from "@nearpay-internal/intents";
 import { ApiError } from "@nearpay-internal/service";
+import type { MultiPayload } from "@nearpay-money/spec";
 import type { VerifierFailure } from "../domain/facilitator-payment/reasons.js";
 import { upstreamCode } from "../infra/clients/peers.js";
 import { RpcError, VerifierError } from "../infra/near/rpc.js";

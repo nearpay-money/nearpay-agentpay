@@ -3,7 +3,7 @@
  * spec 0.3.0 vectors: near-intents binding, operation token mint/verify (expiry first, unknown key, any change of the
  * covered input), and JCS limits.
  */
-import { quotedRequirements } from "@nearpay/spec";
+import { quotedRequirements } from "@nearpay-money/spec";
 import { describe, expect, it } from "vitest";
 import {
   jcs,

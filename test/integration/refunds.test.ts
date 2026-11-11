@@ -6,10 +6,10 @@
  * the relayed leg is listed to the merchant as a `refund` agent payment (dashboard).
  */
 
-import type { IntentMessage } from "@nearpay/spec";
 import { makeNonce } from "@nearpay-internal/intents";
 import { getInternalRefund } from "@nearpay-internal/spec";
 import { mintServiceToken, mockError } from "@nearpay-internal/testing";
+import type { IntentMessage } from "@nearpay-money/spec";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type Signer, signer } from "../support/refund.js";
 import { type Merchant, type RefundLeg, type Stack, startStack, USDC_NEAR, uuid } from "../support/stack.js";

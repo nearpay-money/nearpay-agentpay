@@ -1,7 +1,8 @@
 /** Refund-leg payload rules (lld/agentpay.md §5 `kind: refund`; domain `refund-relay/match.ts`). */
-import type { MultiPayload } from "@nearpay/spec";
+
 import { verifySigned } from "@nearpay-internal/intents";
 import { USDC_NEAR } from "@nearpay-internal/testing";
+import type { MultiPayload } from "@nearpay-money/spec";
 import { describe, expect, it } from "vitest";
 import { checkIssued, matchRefundPayload } from "../../src/domain/refund-relay/match.js";
 import { type Leg, leg, signer } from "../support/refund.js";

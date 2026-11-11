@@ -3,6 +3,9 @@
  * `service:agentpay.relay`) are enforced from the spec by the service bootstrap; checkout routes are
  * open at the gateway and authenticate with the session's client secret, which payments checks.
  */
+
+import { ApiError, implement, type RequestContext, type RouteBinding, respond } from "@nearpay-internal/service";
+import { relaySignedIntent } from "@nearpay-internal/spec";
 import {
   agentPay,
   agentPayRequirements,
@@ -15,9 +18,7 @@ import {
   x402Settle,
   x402Supported,
   x402Verify,
-} from "@nearpay/spec";
-import { ApiError, implement, type RequestContext, type RouteBinding, respond } from "@nearpay-internal/service";
-import { relaySignedIntent } from "@nearpay-internal/spec";
+} from "@nearpay-money/spec";
 import * as payments from "../app/agent-payments.js";
 import * as checkout from "../app/checkout.js";
 import type { Agentpay } from "../app/context.js";

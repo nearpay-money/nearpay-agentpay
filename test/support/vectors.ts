@@ -1,6 +1,6 @@
-/** Shared fixtures from `@nearpay/spec/test-vectors` (consumed by producer and consumer tests). */
+/** Shared fixtures from `@nearpay-money/spec/test-vectors` (consumed by producer and consumer tests). */
 import { createRequire } from "node:module";
-import type { MultiPayload } from "@nearpay/spec";
+import type { MultiPayload } from "@nearpay-money/spec";
 
 const require = createRequire(import.meta.url);
 
@@ -13,7 +13,7 @@ export interface IntentsVectors {
   raw_ed25519: { seed_hex: string; signer_id: string; multipayload: MultiPayload };
 }
 
-export const INTENTS_VECTORS = require("@nearpay/spec/test-vectors/intents-payloads.json") as IntentsVectors;
+export const INTENTS_VECTORS = require("@nearpay-money/spec/test-vectors/intents-payloads.json") as IntentsVectors;
 
 /** The requirement every vector pays: 2 USDC to merchant.near + 0.006 USDC fee, memo = binding. */
 export const VECTOR_REQUIREMENT = {
@@ -44,4 +44,5 @@ export interface NearIntentsVectors {
   headers: Record<string, Record<string, unknown>>;
 }
 
-export const NEAR_INTENTS_VECTORS = require("@nearpay/spec/test-vectors/x402-near-intents.json") as NearIntentsVectors;
+export const NEAR_INTENTS_VECTORS =
+  require("@nearpay-money/spec/test-vectors/x402-near-intents.json") as NearIntentsVectors;

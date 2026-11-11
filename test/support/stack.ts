@@ -6,7 +6,6 @@
  * Verifier (fake JSON-RPC on 127.0.0.1: tests never reach mainnet); NATS and Valkey.
  */
 import { randomBytes } from "node:crypto";
-import { getPublicCheckoutSession, PUBLIC_ROUTES } from "@nearpay/spec";
 import { type Bus, connectBus, type Envelope, publish } from "@nearpay-internal/bus";
 import { createDb, type Database, migrate } from "@nearpay-internal/db";
 import { newId, toUuid } from "@nearpay-internal/ids";
@@ -49,6 +48,7 @@ import {
   testServiceToken,
   USDC_NEAR,
 } from "@nearpay-internal/testing";
+import { getPublicCheckoutSession, PUBLIC_ROUTES } from "@nearpay-money/spec";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import bs58 from "bs58";
 import type { Agentpay } from "../../src/app/context.js";

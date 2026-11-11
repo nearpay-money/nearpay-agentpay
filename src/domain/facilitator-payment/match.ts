@@ -6,7 +6,7 @@
  *   transfer(receiver_id = fee_to, tokens = {asset: fee_amount}, memo = binding)
  * signed for `intents.near`, with `deadline` in (now + 5 s, requirement deadline].
  */
-import type { IntentMessage } from "@nearpay/spec";
+import type { IntentMessage } from "@nearpay-money/spec";
 
 export interface ExpectedTransfer {
   readonly payTo: string;

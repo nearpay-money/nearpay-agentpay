@@ -16,7 +16,7 @@
  * byte of the signed string — is `signed_intent_mismatch`; NearPay never relays anything else (INV-1:
  * the relayer only pays gas for a payload its owner signed as issued).
  */
-import type { IntentMessage, MultiPayload } from "@nearpay/spec";
+import type { IntentMessage, MultiPayload } from "@nearpay-money/spec";
 import { DEADLINE_MARGIN_MS } from "../facilitator-payment/match.js";
 
 /** `Execution.refund.transfer` (rails). */

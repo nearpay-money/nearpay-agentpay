@@ -3,9 +3,10 @@
  * payload must be exactly the one payments issued for the leg. Every single-field mutation — re-signed
  * with a valid signature, so only the equality check stands between it and the relayer — is refused.
  */
-import type { IntentMessage, MultiPayload } from "@nearpay/spec";
+
 import { makeNonce, verifySigned } from "@nearpay-internal/intents";
 import { USDC_NEAR } from "@nearpay-internal/testing";
+import type { IntentMessage, MultiPayload } from "@nearpay-money/spec";
 import fc from "fast-check";
 import { describe, expect, it } from "vitest";
 import { checkIssued, matchRefundPayload } from "../../src/domain/refund-relay/match.js";

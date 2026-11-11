@@ -4,7 +4,7 @@
  * - Checkout relays (`/internal/relay`, `agent_pay`) speak the API catalogue: `insufficient_balance`
  *   for a short balance, `intent_invalid` for everything else the payer must re-sign.
  */
-import { X402_SETTLE_ERRORS } from "@nearpay/spec";
+import { X402_SETTLE_ERRORS } from "@nearpay-money/spec";
 
 export type VerifierFailure =
   | "insufficient_funds"

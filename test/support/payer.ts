@@ -1,6 +1,5 @@
 /** Test payers signing NearPay transfers: implicit or named NEAR accounts (raw ed25519 / NEP-413) and EVM wallets (ERC-191). */
 import { randomBytes } from "node:crypto";
-import type { IntentMessage, MultiPayload } from "@nearpay/spec";
 import {
   buildPayload,
   buildTransferIntents,
@@ -11,6 +10,7 @@ import {
   signNep413,
   signRawEd25519,
 } from "@nearpay-internal/intents";
+import type { IntentMessage, MultiPayload } from "@nearpay-money/spec";
 import { ed25519 } from "@noble/curves/ed25519.js";
 import { secp256k1 } from "@noble/curves/secp256k1.js";
 

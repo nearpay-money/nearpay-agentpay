@@ -1,6 +1,7 @@
 /** Rows → spec objects (AgentPayment). */
-import type { AgentPayment } from "@nearpay/spec";
+
 import { fromUuid } from "@nearpay-internal/ids";
+import type { AgentPayment } from "@nearpay-money/spec";
 import type { Selectable } from "kysely";
 import type { AgentPaymentsTable } from "../infra/db/schema.js";
 

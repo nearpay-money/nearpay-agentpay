@@ -1,7 +1,8 @@
 /** `GET /v1/agent_payments` and `/v1/agent_payments/{id}` (lld/agentpay.md §5): merchant-scoped (INV-8). */
-import type { AgentPayment } from "@nearpay/spec";
+
 import { isId, toUuid } from "@nearpay-internal/ids";
 import { ApiError } from "@nearpay-internal/service";
+import type { AgentPayment } from "@nearpay-money/spec";
 import type { Agentpay } from "./context.js";
 import type { Merchant } from "./merchant.js";
 import { type PageQuery, pageOf } from "./pages.js";
