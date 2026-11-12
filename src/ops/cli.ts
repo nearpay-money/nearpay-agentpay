@@ -5,10 +5,13 @@
  * how agentpay uses keys that exist.
  */
 import { parseArgs } from "node:util";
+import { DEAD_LETTER_USAGE, DeadLetterError, KitOpsUsageError, runKitOps } from "@nearpay-internal/db";
 import { isId, toUuid } from "@nearpay-internal/ids";
 import { ApiError } from "@nearpay-internal/service";
+import type { Subject } from "@nearpay-internal/spec";
 import type { Agentpay } from "../app/context.js";
 import { agentPaymentView } from "../app/views.js";
+import { agentpayHandlers } from "../consumers/handlers.js";
 
 export const USAGE = `usage: ops.js <command> [arguments]
 
@@ -17,19 +20,46 @@ export const USAGE = `usage: ops.js <command> [arguments]
   keys                                   relayer keys (status, in flight, last nonce, allowance)
   key-status <ed25519:…> <active|draining|retired>
                                          stop (draining/retired) or resume (active) using a relayer key
-  kill-switch                            kill switch state as last announced by sentinel`;
+  kill-switch                            kill switch state as last announced by sentinel
+
+dead letters and the outbox (kit 0.6.0):
+${DEAD_LETTER_USAGE}`;
 
 class UsageError extends Error {}
 
 export interface OpsDeps {
   out?: (line: string) => void;
   err?: (line: string) => void;
+  /** Recorded as `resolved_by` on dead letters and skipped outbox rows (default `cli:$USER`). */
+  actor?: string;
+}
+
+const KIT_COMMANDS = new Set(["dead-letters", "outbox"]);
+
+/** `dead-letters …` / `outbox …` (kit `runKitOps`): consumer dead letters replay through the worker's handlers (inbox-deduped). */
+function kitOps(ap: Agentpay, argv: readonly string[], actor: string): Promise<unknown> {
+  const handlers = agentpayHandlers(ap.db, { waiters: ap.waiters, log: ap.log });
+  return runKitOps(ap.db, argv[0] as string, argv.slice(1), {
+    actor,
+    handlers: {
+      consumer: async (e) => {
+        const h = handlers[e.subject as Subject];
+        if (!h) throw new DeadLetterError("no_handler", `agentpay does not consume ${e.subject}`);
+        await h(e);
+      },
+    },
+  });
 }
 
 export async function runOps(argv: readonly string[], ap: Agentpay, deps: OpsDeps = {}): Promise<number> {
   const out = deps.out ?? ((l: string) => process.stdout.write(`${l}\n`));
   const err = deps.err ?? ((l: string) => process.stderr.write(`${l}\n`));
   try {
+    if (KIT_COMMANDS.has(argv[0] ?? "")) {
+      const result = await kitOps(ap, argv, deps.actor ?? `cli:${process.env.USER ?? "operator"}`);
+      out(JSON.stringify(result, (_k, v) => (typeof v === "bigint" ? v.toString() : v), 2));
+      return 0;
+    }
     const { positionals } = parseArgs({ args: [...argv], allowPositionals: true, strict: true, options: {} });
     const [cmd, ...args] = positionals;
     const result = await run(ap, cmd, args);
@@ -37,11 +67,15 @@ export async function runOps(argv: readonly string[], ap: Agentpay, deps: OpsDep
     return 0;
   } catch (e) {
     const code = (e as { code?: string }).code;
-    if (e instanceof UsageError || code === "ERR_PARSE_ARGS_UNKNOWN_OPTION") {
+    if (e instanceof UsageError || e instanceof KitOpsUsageError || code === "ERR_PARSE_ARGS_UNKNOWN_OPTION") {
       err(`${e instanceof Error ? e.message : String(e)}\n\n${USAGE}`);
       return 2;
     }
-    err(JSON.stringify({ error: e instanceof ApiError ? { code: e.code, message: e.message } : String(e) }));
+    err(
+      JSON.stringify({
+        error: e instanceof ApiError || e instanceof DeadLetterError ? { code: e.code, message: e.message } : String(e),
+      }),
+    );
     return 1;
   }
 }
