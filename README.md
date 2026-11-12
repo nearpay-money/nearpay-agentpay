@@ -1,6 +1,11 @@
 # nearpay-agentpay
 
-> x402 v2 facilitator (exact: intents-transfer, near-intents), MPP adapter, batching relayer for signed NEAR Intents with a function-call key pool.
+Agent payments service: an x402 v2 facilitator (`exact` with the `intents-transfer` and cross-chain `near-intents` schemes) and a batching relayer that submits payer-signed NEAR Intents with a pool of function-call keys. The relayer's keys are restricted to `execute_intents` on `intents.near` with zero deposit: it pays gas and cannot move funds on its own.
+
+Part of [NearPay](https://github.com/nearpay-money/nearpay) — start there for the live demo, the architecture diagram and the full "do X, see Y" walkthrough.
+
+- **Where it sits:** merchants' servers (through `@nearpay-money/x402`) and agents call `/x402/*` and `/v1/checkout/sessions/{id}/agent_pay` through the gateway; payments calls `/internal/relay` to relay signed transfers and refunds. It calls compliance (payer screening), payments, rails, identity, the `intents.near` Verifier over NEAR RPC and, in test mode, sandbox; it follows sentinel's kill-switch events.
+- **Status:** NearPay runs on NEAR mainnet as a closed beta (https://nearpay.money). This service is part of that deployment. The MPP adapter named in the design is not built (`src/mpp/` is a placeholder).
 
 |                                       |                                                                                              |
 | ------------------------------------- | -------------------------------------------------------------------------------------------- |
@@ -13,15 +18,15 @@
 
 ## Documentation
 
-This repo stays surgical: design docs live in [`nearpay-brain`](../nearpay-brain/README.md), not here.
+Design docs live in [`nearpay-brain`](https://github.com/nearpay-money/nearpay-brain), not here.
 
-- `nearpay-brain/lld/agentpay.md` — **low-level design (dev-ready; implement from this)**
-- `nearpay-brain/lld/audits/agentpay.md` — audit findings already folded into the LLD
-- `nearpay-brain/roadmap/development-plan.md` — stage and step this repo is built in
-- `nearpay-brain/architecture/hld.md` — system design
-- `nearpay-brain/architecture/repositories.md` — repo topology and dependency rules
-- `nearpay-brain/decisions/ADR-0009-agent-payments-x402.md`
-- `nearpay-brain/architecture/flows.md#7-agent-payment-over-x402-exact--intents-transfer`
+- [`lld/agentpay.md`](https://github.com/nearpay-money/nearpay-brain/blob/main/lld/agentpay.md) — low-level design this repo is implemented from
+- [`lld/audits/agentpay.md`](https://github.com/nearpay-money/nearpay-brain/blob/main/lld/audits/agentpay.md) — audit findings already folded into the LLD
+- [`roadmap/development-plan.md`](https://github.com/nearpay-money/nearpay-brain/blob/main/roadmap/development-plan.md) — stage and step this repo is built in
+- [`architecture/hld.md`](https://github.com/nearpay-money/nearpay-brain/blob/main/architecture/hld.md) — system design
+- [`architecture/repositories.md`](https://github.com/nearpay-money/nearpay-brain/blob/main/architecture/repositories.md) — repo topology and dependency rules
+- [`decisions/ADR-0009-agent-payments-x402.md`](https://github.com/nearpay-money/nearpay-brain/blob/main/decisions/ADR-0009-agent-payments-x402.md)
+- [`architecture/flows.md#7-agent-payment-over-x402-exact--intents-transfer`](https://github.com/nearpay-money/nearpay-brain/blob/main/architecture/flows.md#7-agent-payment-over-x402-exact--intents-transfer)
 
 ## Layout
 
@@ -38,17 +43,28 @@ nearpay-agentpay/
 │   │   ├── batcher/            leader-elected batching relayer
 │   │   └── key-pool/           relayer function-call keys
 │   ├── workers/                jobs (purges, allowance monitor)
-│   ├── mpp/                    Stage 3
-│   └── x402/schemes/near-intents/  Stage 3
+│   ├── mpp/                    placeholder (MPP adapter not built)
+│   └── x402/schemes/near-intents/  placeholder (the near-intents scheme lives in domain/near-intents and app/)
 ├── test/
 │   ├── contract/  integration/  property/  unit/  support/
 └── .github/workflows/
 ```
 
+## Verify this repo
+
+Needs Node 22 (`.nvmrc`) and pnpm 9. `.npmrc` points the `@nearpay-money` and `@nearpay-internal` scopes at a local package registry, so start that first.
+
+1. Start the local registry (no Docker, Node 22 only):
+   `git clone https://github.com/nearpay-money/nearpay-deploy ../nearpay-deploy && ../nearpay-deploy/scripts/registry.sh start`
+   → `curl http://127.0.0.1:4873/-/ping` answers `{}`.
+2. `pnpm install --frozen-lockfile` → ends with `Done in …`, no registry errors.
+3. `pnpm test` (unit and property tests; no Docker) → `Test Files  10 passed (10)`, `Tests  97 passed (97)`.
+4. `pnpm verify` (the full gate: typecheck, lint, unit tests with the coverage gate of ≥ 90 % branches on `src/domain`, integration tests, build) → exits 0. The integration step needs a running Docker daemon: Testcontainers starts Postgres, NATS, Valkey and the `nearpay/sandbox:local` image, which you build first in a [nearpay-sandbox](https://github.com/nearpay-money/nearpay-sandbox) checkout (its README has the `docker build` line). Live mode is tested against a fake NEAR JSON-RPC on 127.0.0.1 with throwaway keys; no test reaches mainnet.
+
 ## Commands
 
 ```sh
-pnpm install                 # @nearpay-money/* from the local registry (nearpay-deploy/scripts/up.sh starts it)
+pnpm install --frozen-lockfile   # NearPay packages from the local registry (see "Verify this repo")
 pnpm verify                  # typecheck, lint, unit + property tests (coverage gate), integration, build
 pnpm test                    # unit + property only (no Docker)
 pnpm test:integration        # Testcontainers (Postgres, NATS, Valkey, nearpay/sandbox:local) + contract tests
@@ -69,7 +85,7 @@ keys; tests never reach mainnet.
 | `NP_NEAR_RPC_URLS`                                                        | empty                               | live Verifier: simulate, `send_tx`, status (tried in order); empty refuses live payloads                                                                            |
 | `NP_INTENTS_CONTRACT`                                                     | `intents.near`                      | Verifier contract                                                                                                                                                   |
 | `NP_TREASURY_ACCOUNT`                                                     | unset                               | live fee recipient; unset refuses live requirements                                                                                                                 |
-| `NP_TEST_TREASURY_ACCOUNT`                                                | `treasury.nearpay.near`             | test fee recipient (sandbox only)                                                                                                                                   |
+| `NP_TEST_TREASURY_ACCOUNT`                                                | `treasury.nearpay.near`             | test fee recipient: a name that exists only inside the sandbox simulation, not a mainnet account NearPay controls                                                    |
 | `NP_RELAYER_ACCOUNT`                                                      | unset                               | relayer account (advertised in `/x402/supported`)                                                                                                                   |
 | `NP_RELAYER_KEY_FILES`                                                    | unset                               | batcher: function-call key files, `*` in the file name (e.g. `/run/secrets/relayer_key_*`)                                                                          |
 | `NP_GAS_PER_PAYLOAD_TGAS`                                                 | 15                                  | batch size `floor(240 / n)`, gas `k × n + 20` Tgas                                                                                                                  |
@@ -160,10 +176,11 @@ keys; tests never reach mainnet.
   agent comes back. `refunded`/`failed` create none. Other owners' executions are acked; duplicate and stale events
   never change a result; a rails defect (no binding, evidence or sender; mismatching execution) is nak'ed with an alert.
 
-## Ops CLI (Stage 1)
+## Ops CLI
 
 `docker compose -p nearpay exec agentpay-api /nodejs/bin/node dist/ops.js <command>`: `payment <ap_…>`, `queue`,
-`keys`, `key-status <ed25519:…> <active|draining|retired>`, `kill-switch`.
+`keys`, `key-status <ed25519:…> <active|draining|retired>`, `kill-switch`, and the kit 0.6.0 commands
+`dead-letters …` and `outbox …`.
 
 ## Status
 
@@ -173,10 +190,14 @@ Stage 2 implemented (step 2.2): Intents-account refund relay, kill switch on liv
 payments' internal route, kit `sendSignedTx`; refund legs are listed by `GET /v1/agent_payments?kind=refund`
 (dashboard). Stage 3 implemented (step 3.2): `exact` + `near-intents` (requirements, quotes, deposits, settles,
 the rails execution consumer and near-intents agent payments) on kit 0.3.0 (`@nearpay-internal/intents` binding and
-operation-token helpers); the MPP adapter evaluation is not started.
+operation-token helpers); the MPP adapter evaluation is not started. Current pins (`package.json`):
+`@nearpay-money/spec` 0.5.0, kit packages 0.6.0.
 
 ## Built with
 
-Fastify, Kysely, pg, NATS, ioredis (via `@nearpay-internal/*`), `@nearpay-internal/intents` (`@near-js/*`,
-`@noble/curves`, `@noble/hashes`, bs58), zod, canonicalize; Vitest, fast-check, Testcontainers, Biome. Code and
-documentation are written with AI assistance (Claude) under human direction and review.
+- Runtime: TypeScript on Node 22; Fastify, pg and NATS through the `@nearpay-internal/*` kit; Kysely, ioredis (Valkey), `@nearpay-internal/intents` (`@near-js/*`), `@noble/curves`, `@noble/hashes`, bs58, zod, canonicalize.
+- External services: the `intents.near` Verifier contract over NEAR RPC.
+- Tests and tooling: Vitest, fast-check, Testcontainers, `@near-js/transactions` (test only), Biome.
+- Licence: Apache-2.0 (`LICENSE`).
+
+Code and documentation are written with AI assistance (Claude) under human direction and review. Built for the NEAR Hackathon (Nov 2026).

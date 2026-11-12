@@ -1,6 +1,6 @@
 # AGENTS.md — nearpay-agentpay
 
-You are working in **nearpay-agentpay**, one of 27 NearPay repositories (`nearpay-brain/architecture/repositories.md`).
+You are working in **nearpay-agentpay**, one of 26 NearPay repositories (`nearpay-brain/architecture/repositories.md`).
 Scope: x402 v2 facilitator (exact: intents-transfer, near-intents), MPP adapter, batching relayer for signed NEAR Intents with a function-call key pool.
 
 ## Before changing anything
