@@ -305,7 +305,11 @@ export async function createBatcher(
         pool: db.pool,
         name: "agentpay:batcher",
         onError,
-        run: async (signal) => {
+        // kit 0.6.0 liveness from the run loop: a tick that never settles fails /healthz while this replica leads
+        // (a tick only polls and claims; batches are sent beside it, each send_tx bounded by its 10 s timeout)
+        livenessFrom: "run",
+        maxSilenceMs: 120_000,
+        run: async (signal, beat) => {
           await relay.recover();
           while (!signal.aborted) {
             try {
@@ -313,6 +317,7 @@ export async function createBatcher(
             } catch (e) {
               onError(e);
             }
+            beat();
             await new Promise<void>((r) => {
               const t = setTimeout(r, tickMs);
               signal.addEventListener(
